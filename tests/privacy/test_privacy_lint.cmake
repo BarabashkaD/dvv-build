@@ -202,6 +202,25 @@ execute_process(COMMAND "${CMAKE_COMMAND}" -E env "GIT_COMMITTER_NAME=GitHub"
                         "${GIT_EXECUTABLE}" -C "${repo_dir}" commit -q --amend --no-edit
                 COMMAND_ERROR_IS_FATAL ANY)
 expect_lint("${repo_dir}" commits "" 0 "")
+expect_lint("${repo_dir}" prepush "" 0 "")
+
+# GitHub's committer address is accepted for committers only: as the author it is a finding,
+# and so is an ordinary author address next to GitHub as the committer (a PR merge commit).
+set(github_authors "noreply${at}github.com" "${bad_email}")
+set(author_index 0)
+foreach(author IN LISTS github_authors)
+    make_repo(github_author_${author_index})
+    commit_file("${repo_dir}" "a.txt" "fine\n" "add a")
+    execute_process(COMMAND "${CMAKE_COMMAND}" -E env "GIT_AUTHOR_NAME=GitHub"
+                            "GIT_AUTHOR_EMAIL=${author}" "GIT_COMMITTER_NAME=GitHub"
+                            "GIT_COMMITTER_EMAIL=noreply${at}github.com"
+                            "${GIT_EXECUTABLE}" -C "${repo_dir}" commit -q --amend --no-edit
+                            --reset-author
+                    COMMAND_ERROR_IS_FATAL ANY)
+    expect_lint("${repo_dir}" commits "" 1 "author or committer e-mail")
+    expect_lint("${repo_dir}" prepush "" 1 "author or committer e-mail")
+    math(EXPR author_index "${author_index} + 1")
+endforeach()
 
 set(github_near_misses "someone${at}github.com" "noreply${at}github.com.example.test"
     "xnoreply${at}github.com")
