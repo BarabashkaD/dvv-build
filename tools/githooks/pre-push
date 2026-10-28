@@ -1,0 +1,14 @@
+#!/bin/sh
+# Privacy lint before every push (spec §13.3): tracked files plus the commits being pushed.
+# The local user and host name are added as extra terms; they are never written anywhere.
+repo=$(git rev-parse --show-toplevel) || exit 1
+hooks=$(cd "$(dirname "$0")" && pwd)
+user=${USER:-${USERNAME:-}}
+host=$(hostname 2>/dev/null || true)
+# git sends one "<local ref> <local sha> <remote ref> <remote sha>" line per pushed ref.
+refs=
+while read -r local_ref local_sha remote_ref remote_sha; do
+    refs="${refs:+$refs;}$local_sha:$remote_sha"
+done
+exec cmake "-DREPO=$repo" -DMODE=prepush "-DPUSH_REFS=$refs" "-DEXTRA_TERMS=$user;$host" \
+    -P "$hooks/../privacy-lint.cmake"

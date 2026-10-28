@@ -1,0 +1,138 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 4, "minor": 2, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "dvv-base-settings",
+      "hidden": true,
+      "binaryDir": "${sourceParentDir}/_build/${sourceDirName}/${presetName}",
+      "cacheVariables": {
+        "DVV_BUILD_TESTS": "ON",
+        "DVV_TEST_DEPENDENCIES": "$env{DVV_TEST_DEPENDENCIES}",
+        "DVV_BUILD_CMAKE_DIR": "${sourceParentDir}/dvv-build/cmake"
+      }
+    },
+    {
+      "name": "vs2026",
+      "displayName": "Windows, Visual Studio 2026",
+      "inherits": "dvv-base-settings",
+      "generator": "Visual Studio 18 2026",
+      "architecture": "x64",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" },
+      "cacheVariables": { "CMAKE_PREFIX_PATH": "${sourceParentDir}/_third_party/msvc" }
+    },
+    {
+      "name": "vs2026-asan",
+      "displayName": "Windows, Visual Studio 2026, AddressSanitizer",
+      "inherits": "vs2026",
+      "cacheVariables": { "DVV_SANITIZE": "address" }
+    },
+    {
+      "name": "ninja-clang",
+      "displayName": "Linux, Clang 19",
+      "inherits": "dvv-base-settings",
+      "generator": "Ninja Multi-Config",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" },
+      "cacheVariables": {
+        "CMAKE_CXX_COMPILER": "clang++-19",
+        "CMAKE_PREFIX_PATH": "${sourceParentDir}/_third_party/clang",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
+      "name": "ninja-clang-asan",
+      "displayName": "Linux, Clang 19, AddressSanitizer + UndefinedBehaviorSanitizer",
+      "inherits": "ninja-clang",
+      "cacheVariables": { "DVV_SANITIZE": "address;undefined" }
+    },
+    {
+      "name": "ninja-clang-tsan",
+      "displayName": "Linux, Clang 19, ThreadSanitizer",
+      "inherits": "ninja-clang",
+      "cacheVariables": { "DVV_SANITIZE": "thread" }
+    }
+  ],
+  "buildPresets": [
+    { "name": "vs2026", "configurePreset": "vs2026", "configuration": "Debug" },
+    { "name": "vs2026-release", "configurePreset": "vs2026", "configuration": "Release" },
+    { "name": "vs2026-asan", "configurePreset": "vs2026-asan", "configuration": "Debug" },
+    { "name": "ninja-clang", "configurePreset": "ninja-clang", "configuration": "Debug" },
+    { "name": "ninja-clang-release", "configurePreset": "ninja-clang", "configuration": "Release" },
+    { "name": "ninja-clang-asan", "configurePreset": "ninja-clang-asan", "configuration": "Debug" },
+    { "name": "ninja-clang-tsan", "configurePreset": "ninja-clang-tsan", "configuration": "Debug" }
+  ],
+  "testPresets": [
+    {
+      "name": "dvv-test-settings",
+      "hidden": true,
+      "output": { "outputOnFailure": true },
+      "execution": { "noTestsAction": "error" },
+      "environment": { "DVV_LEAK_CHECK": "fail" }
+    },
+    { "name": "vs2026", "inherits": "dvv-test-settings", "configurePreset": "vs2026", "configuration": "Debug" },
+    {
+      "name": "vs2026-sanity",
+      "displayName": "Sanity cycle: the fast tests labelled sanity",
+      "inherits": "vs2026",
+      "filter": { "include": { "label": "sanity" } }
+    },
+    {
+      "name": "vs2026-small",
+      "displayName": "Small cycle: every test except those labelled package",
+      "inherits": "vs2026",
+      "filter": { "exclude": { "label": "package" } }
+    },
+    { "name": "vs2026-release", "inherits": "dvv-test-settings", "configurePreset": "vs2026", "configuration": "Release" },
+    { "name": "vs2026-asan", "inherits": "dvv-test-settings", "configurePreset": "vs2026-asan", "configuration": "Debug" },
+    { "name": "ninja-clang", "inherits": "dvv-test-settings", "configurePreset": "ninja-clang", "configuration": "Debug" },
+    { "name": "ninja-clang-release", "inherits": "dvv-test-settings", "configurePreset": "ninja-clang", "configuration": "Release" },
+    { "name": "ninja-clang-asan", "inherits": "dvv-test-settings", "configurePreset": "ninja-clang-asan", "configuration": "Debug" },
+    { "name": "ninja-clang-tsan", "inherits": "dvv-test-settings", "configurePreset": "ninja-clang-tsan", "configuration": "Debug" }
+  ],
+  "workflowPresets": [
+    {
+      "name": "vs2026",
+      "steps": [
+        { "type": "configure", "name": "vs2026" },
+        { "type": "build", "name": "vs2026" },
+        { "type": "test", "name": "vs2026" },
+        { "type": "build", "name": "vs2026-release" },
+        { "type": "test", "name": "vs2026-release" }
+      ]
+    },
+    {
+      "name": "vs2026-asan",
+      "steps": [
+        { "type": "configure", "name": "vs2026-asan" },
+        { "type": "build", "name": "vs2026-asan" },
+        { "type": "test", "name": "vs2026-asan" }
+      ]
+    },
+    {
+      "name": "ninja-clang",
+      "steps": [
+        { "type": "configure", "name": "ninja-clang" },
+        { "type": "build", "name": "ninja-clang" },
+        { "type": "test", "name": "ninja-clang" },
+        { "type": "build", "name": "ninja-clang-release" },
+        { "type": "test", "name": "ninja-clang-release" }
+      ]
+    },
+    {
+      "name": "ninja-clang-asan",
+      "steps": [
+        { "type": "configure", "name": "ninja-clang-asan" },
+        { "type": "build", "name": "ninja-clang-asan" },
+        { "type": "test", "name": "ninja-clang-asan" }
+      ]
+    },
+    {
+      "name": "ninja-clang-tsan",
+      "steps": [
+        { "type": "configure", "name": "ninja-clang-tsan" },
+        { "type": "build", "name": "ninja-clang-tsan" },
+        { "type": "test", "name": "ninja-clang-tsan" }
+      ]
+    }
+  ]
+}

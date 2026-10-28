@@ -1,0 +1,96 @@
+# FFmpeg of the third-party prefix: custom_ffmpeg @ffmpeg_VERSION@, an LGPL shared build (spec §2,
+# §13.2; M4 design D3, §9). Written by the rawreel-workspace superbuild from
+# deps/dvv_ffmpeg_sdkConfig.cmake.in; do not edit. FFmpeg is never linked: dvv-components compiles
+# against these headers and loads the libraries at run time; ffmpeg and ffprobe serve the tests.
+#
+# Sets DVV_FFMPEG_ROOT, DVV_FFMPEG_INCLUDE_DIR, DVV_FFMPEG_RUNTIME_DIR, DVV_FFMPEG_LIBRARY_FILES (the
+# six libraries the loader opens), DVV_FFMPEG_SHIPPED_FILES (their files and links),
+# DVV_FFMPEG_PROGRAM, DVV_FFPROBE_PROGRAM, DVV_FFMPEG_COMMAND and DVV_FFPROBE_COMMAND (lists that run
+# the programs), DVV_FFMPEG_LICENSE_DIR, DVV_FFMPEG_BUILD_INFO, DVV_FFMPEG_RELEASE_VERSION,
+# DVV_FFMPEG_RELEASE_URL, DVV_FFMPEG_RELEASE_SHA256, DVV_FFMPEG_SOURCE_REPOSITORY,
+# DVV_FFMPEG_SOURCE_TAG, DVV_BUNDLE_FFMPEG (ON or OFF), DVV_LAME_SOURCE_VERSION,
+# DVV_LAME_SOURCE_URL and DVV_LAME_SOURCE_SHA256, and the target dvv::ffmpeg_headers (INTERFACE
+# IMPORTED: the include directory, which consumers see as a system directory).
+
+set(DVV_FFMPEG_RELEASE_VERSION "@ffmpeg_VERSION@")
+set(DVV_FFMPEG_RELEASE_URL "@ffmpeg_URL@")
+set(DVV_FFMPEG_RELEASE_SHA256 "@ffmpeg_SHA256@")
+set(DVV_FFMPEG_SOURCE_REPOSITORY "@ffmpeg_repository@")
+set(DVV_FFMPEG_SOURCE_TAG "@ffmpeg_tag@")
+set(DVV_BUNDLE_FFMPEG @bundle_value@)
+set(DVV_LAME_SOURCE_VERSION "@lame_VERSION@")
+set(DVV_LAME_SOURCE_URL "@lame_URL@")
+set(DVV_LAME_SOURCE_SHA256 "@lame_SHA256@")
+
+# The archive's top folder: the one with include/libavutil/avutil.h (M4 Task 0 recorded the layout:
+# <prefix>/custom_ffmpeg/<os>-x64/shared/lgpl).
+cmake_path(SET _dvv_ffmpeg_extracted NORMALIZE "${CMAKE_CURRENT_LIST_DIR}/../../../custom_ffmpeg")
+file(GLOB_RECURSE _dvv_ffmpeg_headers LIST_DIRECTORIES false "${_dvv_ffmpeg_extracted}/avutil.h")
+list(FILTER _dvv_ffmpeg_headers INCLUDE REGEX "/include/libavutil/avutil\\.h$")
+list(LENGTH _dvv_ffmpeg_headers _dvv_ffmpeg_count)
+if(NOT _dvv_ffmpeg_count EQUAL 1)
+    set(dvv_ffmpeg_sdk_FOUND FALSE)
+    set(dvv_ffmpeg_sdk_NOT_FOUND_MESSAGE
+        "expected one include/libavutil/avutil.h in ${_dvv_ffmpeg_extracted}, found "
+        "${_dvv_ffmpeg_count}; run bootstrap")
+    return()
+endif()
+string(REGEX REPLACE "/include/libavutil/avutil\\.h$" "" DVV_FFMPEG_ROOT "${_dvv_ffmpeg_headers}")
+set(DVV_FFMPEG_INCLUDE_DIR "${DVV_FFMPEG_ROOT}/include")
+if(WIN32)
+    set(DVV_FFMPEG_RUNTIME_DIR "${DVV_FFMPEG_ROOT}/bin")
+else()
+    set(DVV_FFMPEG_RUNTIME_DIR "${DVV_FFMPEG_ROOT}/lib")
+endif()
+set(DVV_FFMPEG_PROGRAM "${DVV_FFMPEG_ROOT}/bin/ffmpeg${CMAKE_EXECUTABLE_SUFFIX}")
+set(DVV_FFPROBE_PROGRAM "${DVV_FFMPEG_ROOT}/bin/ffprobe${CMAKE_EXECUTABLE_SUFFIX}")
+set(DVV_FFMPEG_LICENSE_DIR "${DVV_FFMPEG_ROOT}/share/licenses")
+set(DVV_FFMPEG_BUILD_INFO "${DVV_FFMPEG_ROOT}/share/custom_ffmpeg/build-info.txt")
+if(WIN32)
+    set(DVV_FFMPEG_COMMAND "${DVV_FFMPEG_PROGRAM}")
+    set(DVV_FFPROBE_COMMAND "${DVV_FFPROBE_PROGRAM}")
+else()
+    # The programs find their libraries without a RUNPATH, too.
+    set(DVV_FFMPEG_COMMAND "${CMAKE_COMMAND}" -E env "LD_LIBRARY_PATH=${DVV_FFMPEG_RUNTIME_DIR}"
+                           "${DVV_FFMPEG_PROGRAM}")
+    set(DVV_FFPROBE_COMMAND "${CMAKE_COMMAND}" -E env "LD_LIBRARY_PATH=${DVV_FFMPEG_RUNTIME_DIR}"
+                            "${DVV_FFPROBE_PROGRAM}")
+endif()
+
+# The six libraries of M4 design D3 (no avdevice, no postproc).
+set(DVV_FFMPEG_LIBRARY_FILES "")
+set(DVV_FFMPEG_SHIPPED_FILES "")
+foreach(_dvv_library IN ITEMS avutil avcodec avformat avfilter swscale swresample)
+    if(WIN32)
+        file(GLOB _dvv_files LIST_DIRECTORIES false "${DVV_FFMPEG_RUNTIME_DIR}/${_dvv_library}-*.dll")
+        set(_dvv_loaded ${_dvv_files})
+    else()
+        file(GLOB _dvv_files LIST_DIRECTORIES false "${DVV_FFMPEG_RUNTIME_DIR}/lib${_dvv_library}.so*")
+        set(_dvv_loaded ${_dvv_files})
+        list(FILTER _dvv_loaded INCLUDE REGEX "/lib${_dvv_library}\\.so\\.[0-9]+$")
+    endif()
+    list(LENGTH _dvv_loaded _dvv_count)
+    if(NOT _dvv_count EQUAL 1)
+        set(dvv_ffmpeg_sdk_FOUND FALSE)
+        set(dvv_ffmpeg_sdk_NOT_FOUND_MESSAGE
+            "expected one ${_dvv_library} library in ${DVV_FFMPEG_RUNTIME_DIR}, found ${_dvv_count}")
+        return()
+    endif()
+    list(APPEND DVV_FFMPEG_LIBRARY_FILES ${_dvv_loaded})
+    list(APPEND DVV_FFMPEG_SHIPPED_FILES ${_dvv_files})
+endforeach()
+list(SORT DVV_FFMPEG_SHIPPED_FILES)
+foreach(_dvv_file IN ITEMS "${DVV_FFMPEG_PROGRAM}" "${DVV_FFPROBE_PROGRAM}" "${DVV_FFMPEG_LICENSE_DIR}"
+                           "${DVV_FFMPEG_BUILD_INFO}")
+    if(NOT EXISTS "${_dvv_file}")
+        set(dvv_ffmpeg_sdk_FOUND FALSE)
+        set(dvv_ffmpeg_sdk_NOT_FOUND_MESSAGE "${_dvv_file} does not exist; run bootstrap")
+        return()
+    endif()
+endforeach()
+
+if(NOT TARGET dvv::ffmpeg_headers)
+    add_library(dvv::ffmpeg_headers INTERFACE IMPORTED)
+    set_target_properties(dvv::ffmpeg_headers PROPERTIES
+        INTERFACE_INCLUDE_DIRECTORIES "${DVV_FFMPEG_INCLUDE_DIR}")
+endif()

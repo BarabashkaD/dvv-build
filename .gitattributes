@@ -1,0 +1,15 @@
+# Line endings: LF in the repository and working tree; CRLF only where Windows tools need it.
+* text=auto eol=lf
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.sln text eol=crlf
+*.sh text eol=lf
+tools/githooks/* text eol=lf
+# Upstream licence texts pinned by SHA256: never converted.
+deps/licenses/** -text
+
+*.png binary
+*.jpg binary
+*.ico binary
+*.pdf binary

@@ -1,0 +1,265 @@
+# Reusable CI of the dvv repositories, part of dvv-build. Three layouts:
+#   lib   a dvv library calls it with
+#           jobs: { ci: { uses: <owner>/dvv-build/.github/workflows/dvv-ci.yml@v<X>,
+#                         with: { repo: <library name> } } }
+#         where X is the dvv-build line of its dvv-deps.txt (check-pins.cmake checks it). The dvv
+#         root is the workspace: <library>/, dvv-build/ at tag v<X>, and the dependencies that
+#         fetch-deps.cmake clones at their minimum tags.
+#   app   an application with the dvv repositories as submodules in libs/ adds `app: true`
+#         (and `test-dependencies` to run the libraries' tests at the pins). The dvv root is
+#         <app>/libs and dvv-build is the pinned libs/dvv-build.
+#   self  dvv-build's own ci.yml calls it with `repo: dvv-build`: dvv-build alone, its own tests.
+# Every job installs the tools of the dvv-build in use (CMake 4) before it runs a dvv-build script.
+name: dvv-ci
+
+on:
+  workflow_call:
+    inputs:
+      repo:
+        description: Name of the calling repository, e.g. dvv-base
+        required: true
+        type: string
+      app:
+        description: The caller is an application with the dvv repositories as submodules in libs/
+        required: false
+        type: boolean
+        default: false
+      test-dependencies:
+        description: Also build and run the tests of the dvv dependencies (DVV_TEST_DEPENDENCIES)
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  # self, lib or app (see the header).
+  DVV_LAYOUT: ${{ inputs.repo == 'dvv-build' && 'self' || (inputs.app && 'app' || 'lib') }}
+  # The dvv root and the dvv-build in use, relative to the workspace.
+  DVV_ROOT: ${{ inputs.app && format('{0}/libs', inputs.repo) || '.' }}
+  DVV_BUILD: ${{ inputs.app && format('{0}/libs/dvv-build', inputs.repo) || 'dvv-build' }}
+  DVV_REPO: ${{ inputs.repo }}
+
+jobs:
+  # Lib layout: the dvv-build line of <repo>/dvv-deps.txt, needed before dvv-build is checked out.
+  # The rules are those of cmake/DvvDepsFile.cmake: the line may be anywhere, a CR before the line
+  # end and a UTF-8 BOM are dropped, it appears exactly once and its version is <major>.<minor>.<patch>.
+  # fetch-deps.cmake checks the whole file afterwards. Other layouts: an empty version.
+  dvv-build-min:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.read.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+        if: env.DVV_LAYOUT == 'lib'
+        with:
+          path: ${{ inputs.repo }}
+      - name: Read the dvv-build minimum
+        id: read
+        if: env.DVV_LAYOUT == 'lib'
+        shell: bash
+        run: |
+          file="$DVV_REPO/dvv-deps.txt"
+          if [ ! -f "$file" ]; then
+            echo "::error::$file does not exist; it needs a 'dvv-build <major>.<minor>.<patch>' line"
+            exit 1
+          fi
+          lines=$(tr -d '\r' < "$file" | sed '1s/^\xEF\xBB\xBF//' | awk '$1 == "dvv-build"')
+          count=$(printf '%s' "$lines" | grep -c '^' || true)
+          if [ "$count" -ne 1 ]; then
+            echo "::error::$file needs exactly one 'dvv-build <major>.<minor>.<patch>' line, found $count"
+            exit 1
+          fi
+          if ! printf '%s\n' "$lines" | grep -Eq '^[[:space:]]*dvv-build[[:space:]]+[0-9]+\.[0-9]+\.[0-9]+[[:space:]]*$'; then
+            echo "::error::$file: bad line '$lines' (expected 'dvv-build <major>.<minor>.<patch>')"
+            exit 1
+          fi
+          version=$(printf '%s\n' "$lines" | awk '{ print $2 }')
+          echo "$DVV_REPO needs dvv-build $version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: ${{ matrix.name }}
+    needs: dvv-build-min
+    runs-on: ${{ matrix.os }}
+    # A cache miss builds the whole third-party prefix first.
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: windows-msvc, os: windows-2025, toolchain: msvc, preset: vs2026 }
+          - { name: windows-msvc-asan, os: windows-2025, toolchain: msvc, preset: vs2026-asan }
+          - { name: linux-clang, os: ubuntu-24.04, toolchain: clang, preset: ninja-clang }
+          - { name: linux-clang-asan, os: ubuntu-24.04, toolchain: clang, preset: ninja-clang-asan }
+          - { name: linux-clang-tsan, os: ubuntu-24.04, toolchain: clang, preset: ninja-clang-tsan }
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          path: ${{ inputs.repo }}
+          submodules: ${{ inputs.app && 'recursive' || 'false' }}
+      - uses: actions/checkout@v5
+        if: env.DVV_LAYOUT == 'lib'
+        with:
+          repository: ${{ github.repository_owner }}/dvv-build
+          ref: v${{ needs.dvv-build-min.outputs.version }}
+          path: dvv-build
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Install tools
+        run: python -m pip install -r ${{ env.DVV_BUILD }}/tools/requirements.txt
+      - name: Fetch the dvv dependencies
+        if: env.DVV_LAYOUT == 'lib'
+        env:
+          DVV_GIT_BASE_URL: ${{ github.server_url }}/${{ github.repository_owner }}
+        run: cmake "-DREPO=${{ inputs.repo }}" -P dvv-build/tools/fetch-deps.cmake
+      - name: Install Linux compiler
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y clang-19 libclang-rt-19-dev libstdc++-14-dev
+      # Window-system and GUI packages: bootstrap builds wxWidgets on GTK 3 and the validation
+      # layer with Xlib, XCB and Wayland support; display tests run under Xvfb.
+      - name: Install Linux window-system packages
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y libgtk-3-dev pkgconf libx11-dev libxcb1-dev libxrandr-dev libwayland-dev zlib1g-dev libpng-dev xvfb xauth
+      # Linux runs the GPU tests on Mesa's lavapipe (Vulkan 1.4 from noble-updates).
+      - name: Install and check the Vulkan device (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y mesa-vulkan-drivers libvulkan1 vulkan-tools
+          cmake -P "$DVV_BUILD/tools/check-vulkan-device.cmake"
+      - name: Check Visual Studio 2026
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          $version = & $vswhere -latest -property catalog_productDisplayVersion
+          if (-not $version.StartsWith('18.')) { throw "Visual Studio 2026 (18.x) required, found $version" }
+          Write-Host "Visual Studio $version"
+      # The key hashes the inputs of bootstrap's own up-to-date stamp, so a restored prefix is not
+      # rebuilt. A miss builds all of it; the validation layer and wxWidgets take most of that time.
+      # The path string is part of the cache version: another workflow shares these entries only
+      # with the same key and exactly this path (./_third_party/<tc>, app: <app>/libs/_third_party/<tc>).
+      - name: Restore third-party
+        id: third-party
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ env.DVV_ROOT }}/_third_party/${{ matrix.toolchain }}
+          key: third-party-${{ runner.os }}-${{ matrix.toolchain }}-${{ hashFiles(format('{0}/deps/**', env.DVV_BUILD), format('{0}/cmake/DvvThirdParty.cmake', env.DVV_BUILD), format('{0}/cmake/DvvSpdx.cmake', env.DVV_BUILD)) }}
+      - name: Bootstrap (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./${{ env.DVV_BUILD }}/bootstrap.ps1 -Toolchain ${{ matrix.toolchain }}
+      - name: Bootstrap (Linux)
+        if: runner.os == 'Linux'
+        run: ./${{ env.DVV_BUILD }}/bootstrap.sh --toolchain ${{ matrix.toolchain }}
+      # Saved right after bootstrap, so a failing build or test does not throw the third-party build
+      # away. When parallel jobs miss together, the first save wins and the others only warn.
+      - name: Save third-party
+        if: steps.third-party.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ env.DVV_ROOT }}/_third_party/${{ matrix.toolchain }}
+          key: ${{ steps.third-party.outputs.cache-primary-key }}
+      # Windows runners have no GPU: the GPU, display and GUI tests exit with 77 and CTest reports
+      # them as skipped.
+      - name: Build and test (Windows)
+        if: runner.os == 'Windows'
+        working-directory: ${{ inputs.repo }}
+        env:
+          DVV_REQUIRE_FFMPEG: "1"
+          DVV_TEST_DEPENDENCIES: ${{ inputs.test-dependencies && 'ON' || '' }}
+        run: cmake --workflow --preset ${{ matrix.preset }}
+      # On Linux the GPU and display tests must run (a missing device or display fails them) with
+      # synchronization validation through the third-party prefix's layer, on a virtual X server.
+      # NO_AT_BRIDGE keeps GTK from looking for the accessibility bus. TSAN_OPTIONS stays unset: the
+      # GPU tests pass their own suppressions through CTest.
+      - name: Build and test (Linux)
+        if: runner.os == 'Linux'
+        working-directory: ${{ inputs.repo }}
+        env:
+          DVV_REQUIRE_GPU: "1"
+          DVV_VK_VALIDATION: sync
+          DVV_VK_VALIDATION_REQUIRED: "1"
+          NO_AT_BRIDGE: "1"
+          DVV_TEST_DEPENDENCIES: ${{ inputs.test-dependencies && 'ON' || '' }}
+        run: xvfb-run -a -s "-screen 0 1920x1080x24" cmake --workflow --preset ${{ matrix.preset }}
+
+  # Libraries and applications only: dvv-build compiles no sources of its own, and its ci.yml runs
+  # the privacy lint in the tools job.
+  lint:
+    if: inputs.repo != 'dvv-build'
+    needs: dvv-build-min
+    runs-on: ubuntu-24.04
+    # It bootstraps the clang prefix itself on a cache miss.
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          path: ${{ inputs.repo }}
+          fetch-depth: 0
+          submodules: ${{ inputs.app && 'recursive' || 'false' }}
+      - uses: actions/checkout@v5
+        if: env.DVV_LAYOUT == 'lib'
+        with:
+          repository: ${{ github.repository_owner }}/dvv-build
+          ref: v${{ needs.dvv-build-min.outputs.version }}
+          path: dvv-build
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Install tools
+        run: |
+          python -m pip install -r "$DVV_BUILD/tools/requirements.txt"
+          sudo apt-get update && sudo apt-get install -y clang-19 libstdc++-14-dev
+      # As in the build job: bootstrap builds wxWidgets and the validation layer, and the build
+      # compiles GTK 3 code.
+      - name: Install Linux window-system packages
+        run: sudo apt-get install -y libgtk-3-dev pkgconf libx11-dev libxcb1-dev libxrandr-dev libwayland-dev zlib1g-dev libpng-dev xvfb xauth
+      - name: Privacy lint
+        run: cmake "-DREPO=${{ inputs.repo }}" -DMODE=commits -P "$DVV_BUILD/tools/privacy-lint.cmake"
+      # lib: the workflows' dvv-build @vX = the dvv-build line; app: the pins are the tagged
+      # releases, relative submodule URLs, @vX = the pinned dvv-build (needs the network).
+      - name: Check the pins
+        run: cmake "-DREPO=${{ inputs.repo }}" "-DMODE=$DVV_LAYOUT" -P "$DVV_BUILD/tools/check-pins.cmake"
+      - name: Fetch the dvv dependencies
+        if: env.DVV_LAYOUT == 'lib'
+        env:
+          DVV_GIT_BASE_URL: ${{ github.server_url }}/${{ github.repository_owner }}
+        run: cmake "-DREPO=${{ inputs.repo }}" -P dvv-build/tools/fetch-deps.cmake
+      - name: Format
+        working-directory: ${{ inputs.repo }}
+        run: git ls-files -z '*.h' '*.cpp' | xargs -0 -r clang-format --dry-run --Werror
+      # The same cache entry as the linux-clang build jobs.
+      - name: Restore third-party
+        id: third-party
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ env.DVV_ROOT }}/_third_party/clang
+          key: third-party-${{ runner.os }}-clang-${{ hashFiles(format('{0}/deps/**', env.DVV_BUILD), format('{0}/cmake/DvvThirdParty.cmake', env.DVV_BUILD), format('{0}/cmake/DvvSpdx.cmake', env.DVV_BUILD)) }}
+      - name: Bootstrap
+        run: ./${{ env.DVV_BUILD }}/bootstrap.sh --toolchain clang
+      - name: Save third-party
+        if: steps.third-party.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ env.DVV_ROOT }}/_third_party/clang
+          key: ${{ steps.third-party.outputs.cache-primary-key }}
+      # clang-tidy reads sources that include generated files (e.g. dvv_add_shaders headers), which
+      # exist only after a build.
+      - name: Build
+        working-directory: ${{ inputs.repo }}
+        run: |
+          cmake --preset ninja-clang
+          cmake --build --preset ninja-clang
+      - name: Tidy
+        working-directory: ${{ inputs.repo }}
+        run: |
+          # ** reaches src subfolders; * stops at '/' for tests and tools, so tests/compile_fail and
+          # tests/package (built separately) stay out. Windows-only sources (*_win32.cpp, *_msw.cpp)
+          # are not in the Linux compile database.
+          git ls-files -z ':(glob)src/**/*.cpp' ':(glob)tests/*.cpp' ':(glob)tools/*.cpp' \
+              ':(exclude,glob)**/*_win32.cpp' ':(exclude,glob)**/*_msw.cpp' |
+            xargs -0 -r clang-tidy -p "$GITHUB_WORKSPACE/$DVV_ROOT/_build/$DVV_REPO/ninja-clang" --quiet

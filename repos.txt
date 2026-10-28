@@ -1,0 +1,8 @@
+# The dvv libraries in dependency order (the order sanity checks them in). Each repository's
+# dvv-deps.txt is the source of its dependencies and minimum versions.
+dvv-base
+dvv-registry
+dvv-platform
+dvv-gpu
+dvv-media
+dvv-components

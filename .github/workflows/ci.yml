@@ -1,0 +1,67 @@
+# CI of dvv-build itself: the script tests and the privacy lint on Windows and Linux (tools), and
+# dvv-build's own CMake project through the reusable workflow in the self layout (self: the
+# third-party superbuild, the wxWidgets and custom_ffmpeg consumers and the same script tests).
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One run per branch or pull request at a time. Only pull-request runs are cancelled by a newer
+# push, so a run on main can always reach its third-party cache save.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  tools:
+    name: tools-${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025]
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Install tools
+        run: python -m pip install -r tools/requirements.txt
+      - name: SPDX tests
+        run: cmake -P tests/spdx/test_spdx.cmake
+      - name: Third-party gate tests
+        run: cmake -P tests/spdx/test_third_party_gate.cmake
+      - name: Third-party versions tests
+        run: cmake -P tests/deps/test_versions.cmake
+      - name: Superbuild script tests
+        run: cmake "-DWORK_DIR=${{ runner.temp }}/superbuild-scripts-test" -P tests/deps/test_superbuild_scripts.cmake
+      - name: Vulkan device check tests
+        run: cmake "-DWORK_DIR=${{ runner.temp }}/check-vulkan-device-test" -P tests/ci/test_check_vulkan_device.cmake
+      - name: Privacy lint tests
+        run: cmake "-DWORK_DIR=${{ runner.temp }}/privacy-lint-test" -P tests/privacy/test_privacy_lint.cmake
+      - name: Preset files tests
+        run: |
+          cmake -P tests/cmake/test_presets_consistency.cmake
+          cmake "-DWORK_DIR=${{ runner.temp }}/presets-drift-test" -P tests/cmake/test_presets_consistency_drift.cmake
+      - name: DvvDeps tests
+        run: cmake "-DWORK_DIR=${{ runner.temp }}/dvv-deps-test" -DGENERATOR=Ninja -P tests/cmake/test_dvv_deps.cmake
+      - name: fetch-deps tests
+        run: cmake "-DWORK_DIR=${{ runner.temp }}/fetch-deps-test" -P tests/tools/test_fetch_deps.cmake
+      - name: check-pins tests
+        run: cmake "-DWORK_DIR=${{ runner.temp }}/check-pins-test" -P tests/tools/test_check_pins.cmake
+      - name: Privacy lint
+        run: cmake "-DREPO=${{ github.workspace }}" -DMODE=commits -P tools/privacy-lint.cmake
+
+  self:
+    uses: ./.github/workflows/dvv-ci.yml
+    with:
+      repo: dvv-build
