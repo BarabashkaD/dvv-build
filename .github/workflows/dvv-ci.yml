@@ -88,10 +88,13 @@ jobs:
     timeout-minutes: 180
     strategy:
       fail-fast: false
+      # Windows: one job per configuration (`preset` configures, `config` names the build and test
+      # presets), so Debug and Release build and test in parallel; Linux runs the workflow preset.
       matrix:
         include:
-          - { name: windows-msvc, os: windows-2025, toolchain: msvc, preset: vs2026 }
-          - { name: windows-msvc-asan, os: windows-2025, toolchain: msvc, preset: vs2026-asan }
+          - { name: windows-msvc, os: windows-2025, toolchain: msvc, preset: vs2026, config: vs2026 }
+          - { name: windows-msvc-release, os: windows-2025, toolchain: msvc, preset: vs2026, config: vs2026-release }
+          - { name: windows-msvc-asan, os: windows-2025, toolchain: msvc, preset: vs2026-asan, config: vs2026-asan }
           - { name: linux-clang, os: ubuntu-24.04, toolchain: clang, preset: ninja-clang }
           - { name: linux-clang-asan, os: ubuntu-24.04, toolchain: clang, preset: ninja-clang-asan }
           - { name: linux-clang-tsan, os: ubuntu-24.04, toolchain: clang, preset: ninja-clang-tsan }
@@ -164,14 +167,23 @@ jobs:
           path: ${{ env.DVV_ROOT }}/_third_party/${{ matrix.toolchain }}
           key: ${{ steps.third-party.outputs.cache-primary-key }}
       # Windows runners have no GPU: the GPU, display and GUI tests exit with 77 and CTest reports
-      # them as skipped.
-      - name: Build and test (Windows)
+      # them as skipped. The three steps are the workflow preset's steps for one configuration.
+      - name: Configure (Windows)
+        if: runner.os == 'Windows'
+        working-directory: ${{ inputs.repo }}
+        env:
+          DVV_TEST_DEPENDENCIES: ${{ inputs.test-dependencies && 'ON' || '' }}
+        run: cmake --preset ${{ matrix.preset }}
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        working-directory: ${{ inputs.repo }}
+        run: cmake --build --preset ${{ matrix.config }}
+      - name: Test (Windows)
         if: runner.os == 'Windows'
         working-directory: ${{ inputs.repo }}
         env:
           DVV_REQUIRE_FFMPEG: "1"
-          DVV_TEST_DEPENDENCIES: ${{ inputs.test-dependencies && 'ON' || '' }}
-        run: cmake --workflow --preset ${{ matrix.preset }}
+        run: ctest --preset ${{ matrix.config }}
       # On Linux the GPU and display tests must run (a missing device or display fails them) with
       # synchronization validation through the third-party prefix's layer, on a virtual X server.
       # NO_AT_BRIDGE keeps GTK from looking for the accessibility bus. TSAN_OPTIONS stays unset: the
