@@ -60,7 +60,8 @@ dvv-platform 0.1.0
 ```
 
 - `dvv-build <version>` appears exactly once, anywhere in the file; `dvv-<x> <version>` once per
-  dependency; a line that starts with `#` is a comment. `cmake/DvvDepsFile.cmake` is the one reader (CI reads the
+  dependency; a line that starts with `#` is a comment. A branch may add ` @<commit>` to a
+  dependency's line (see "Changing a library"). `cmake/DvvDepsFile.cmake` is the one reader (CI reads the
   `dvv-build` line with bash by the same rules before dvv-build is checked out).
 - `dvv_dependencies()` (`cmake/DvvDeps.cmake`) checks at every configure that each dependency is
   present in the root and meets its minimum, and makes it available; the dependencies build without
@@ -176,6 +177,38 @@ A dvv-build change follows the same flow. A library's `dvv-build` line in `dvv-d
 `cmake -DREPO=dvv-<x> -DMODE=lib -P dvv-build/tools/check-pins.cmake` in the dvv root, where `REPO`
 is the path of the repository folder.
 
+**Main depends on tags only.** On `main`, every `dvv-deps.txt` minimum and every application pin
+is a released tag: `check-pins` fails on an application pin that is not the commit of tag
+`v<version>` of that library (it asks the library's origin with `git ls-remote`, so it also works
+in CI's shallow checkout without tags), and on any branch-only override (lib and app mode).
+
+**Branch-only override (joint testing).** To test a library branch against an unreleased commit of
+a dependency, add ` @<commit>` (the full 40-digit lowercase hash, pushed to the dependency's
+origin) after the version on that dependency's line:
+
+```text
+dvv-base 0.1.0 @0123456789abcdef0123456789abcdef01234567
+```
+
+`fetch-deps` then fetches exactly that commit instead of tag `v<minimum>` and checks that its
+version still meets the minimum; an existing folder must be checked out at that commit. The
+`dvv-build` line takes no override. Notes:
+
+- It needs `dvv-build 0.1.2` or later on the library's `dvv-build` line, together with the workflow
+  `@v0.1.2`.
+- The commit can only be one that is pushed to the dependency's origin.
+- Configure (`DvvDeps`) uses the dependency's folder as it is, so in the side-by-side layout the
+  local build follows the clone's current checkout; only `fetch-deps` checks the commit.
+- An override in a dependency's own `dvv-deps.txt` must be repeated: `fetch-deps` fails until the
+  library's line for that repository carries the same ` @<commit>`.
+- An application does not use the override: it moves its `libs/<name>` submodule instead, and
+  `check-pins` (app mode) rejects an override in the application's `dvv-deps.txt` and in a pinned
+  library's `dvv-deps.txt`.
+
+While an override is present, the lint job runs the privacy lint, clang-format and clang-tidy as
+usual and fails at its last step, `check-pins`, so the pull request cannot go green: tag the
+dependency, raise the minimum and remove the override ("back on tags before merge").
+
 ## CI
 
 `.github/workflows/dvv-ci.yml` is the reusable workflow (Windows MSVC and Linux Clang builds with
@@ -195,7 +228,7 @@ jobs:
 
 - Library (lib layout): reads the `dvv-build` line, checks out dvv-build at that tag, runs
   `fetch-deps` with `DVV_GIT_BASE_URL` = the caller's account, so the libraries' minimum versions
-  are tested. Lint: privacy lint, `check-pins` (lib mode), clang-format, clang-tidy. A fork needs
+  are tested. Lint: privacy lint, clang-format, clang-tidy, then `check-pins` (lib mode). A fork needs
   the dvv repositories under its own account.
 - Application: `app: true` (submodules checked out recursively; `check-pins` in app mode), and
   `test-dependencies: true` to run every library's tests at the pins.
@@ -220,27 +253,46 @@ self-tests) need a desktop. Environment settings:
 | `DVV_REQUIRE_FFMPEG` | `1` | a missing FFmpeg fails the FFmpeg tests (label `ffmpeg`) instead of skipping them |
 | `DVV_TEST_DEPENDENCIES` | empty or `ON` | also build and run the tests of the dvv dependencies |
 
-Three test cycles (Windows, PowerShell 7):
+Test tiers (Windows, PowerShell 7; `<root>` is the folder that holds the changed checkout):
 
-| Cycle | When | Command |
-|---|---|---|
-| Sanity | after any change | `pwsh <root>/dvv-build/tools/sanity.ps1 [-Repo <name>,...] [-NoGui]` |
-| Small | once per task | `cmake --build --preset vs2026`, then `ctest --preset vs2026-small` (all but label `package`) |
-| Full | releases | `cmake --workflow --preset vs2026` (Debug and Release); `cmake --workflow --preset vs2026-asan` |
+| Tier | When | Runs | Command |
+|---|---|---|---|
+| T0 | after each change | the changed repository: `sanity`, or only the relevant tests | `pwsh <root>/dvv-build/tools/sanity.ps1 -Repo <repo>`; for the relevant tests `ctest --preset vs2026 -R <regex>` in a built tree, or `pwsh <root>/dvv-build/tools/sanity.ps1 -Repo <repo> -Tests <regex>` (builds first) |
+| T1 | before each commit | `small` (all but label `package`) in the changed repository and the application, `sanity` in the repositories between them; clang-format on the changed files; the privacy lint | `pwsh <root>/dvv-build/tools/sanity.ps1 -Repo <repo> -Downstream -Small`, then `cmake "-DREPO=<repo>" -DMODE=commits -P <root>/dvv-build/tools/privacy-lint.cmake` |
+| T2 | when a task is mostly done, and at milestone ends | the full workflows: Windows, Linux with sanitizers, clang-tidy; a package dry run for packaging or release changes | `cmake --workflow --preset vs2026` (Debug and Release) and `vs2026-asan`; on Linux `ninja-clang`, `ninja-clang-asan`, `ninja-clang-tsan` |
+| CI | every push and pull request | the full matrix and the lint job | `.github/workflows/dvv-ci.yml` (see CI) |
+
+For T0, the test names select the area: `-R "^dvv_build\."` (dvv-build), `-R "\.compile_fail\."`
+(factory and registry changes) or a library's `dvv_<x>.` prefix. In a built tree,
+`ctest --preset vs2026 -L <label>` selects by the labels `gpu`, `display`, `gui`, `ffmpeg` and
+`package` (not available through `-Tests`). A change in a library's public header or behaviour also
+needs `-Downstream`.
 
 `sanity.ps1` checks dvv-build, the libraries of `repos.txt` next to it and the application (when
 the root is `<app>/libs`). For each one it builds the `vs2026` tree incrementally and runs
 `ctest --preset vs2026-sanity` with the GPU settings above (dvv-build: only its `dvv_build.*`
 tests). Without `-Repo` it checks the repositories with uncommitted or unpushed changes, or all of
-them when none has. Only the selected repositories are built, so name the users of a changed lower
-repository too. It prints one PASS or FAIL line per repository (logs in `<root>/_build/sanity/`)
-and exits with 1 on a failure. `-NoGui` leaves out the `display` tests.
+them when none has. Only the selected repositories are built. It prints one PASS or FAIL line per
+repository with its build and test times (logs in `<root>/_build/sanity/`) and exits with 1 on a
+failure. Switches:
+
+- `-Downstream`: also every present repository after the first selected one (the order of
+  `repos.txt`, then the application), so the users of a changed library are rebuilt and tested.
+- `-Small`: `vs2026-small` instead of `vs2026-sanity` in the selected repositories and the
+  application; the repositories `-Downstream` adds between them keep `vs2026-sanity`.
+- `-Tests <regex>`: needs exactly one repository given with `-Repo`; there it tests with
+  `vs2026-small` and `ctest -R <regex>` (in dvv-build the regex replaces the `^dvv_build\.`
+  filter). Repositories added by `-Downstream` keep their usual preset and get no `-R`. An empty
+  regex is an error.
+- `-NoGui`: leaves out the `display` tests.
 
 On Linux (bash, tools environment active) the same cycle is
-`<root>/dvv-build/tools/sanity.sh [--repo <name>,...] [--gui]`: the `ninja-clang` preset and
-`ctest --preset ninja-clang -L sanity`; `VK_DRIVER_FILES` defaults to the lavapipe ICD. The
-`display` tests run only with `--gui` and an X display in `DISPLAY` (WSLg under WSL 2, or
-`xvfb-run -a -s "-screen 0 1920x1080x24"` as in CI). Logs go to `<root>/_build/sanity-linux/`.
+`<root>/dvv-build/tools/sanity.sh [--repo <name>,...] [--gui] [--small] [--downstream] [--tests <regex>]`:
+the `ninja-clang` tree with the test presets `ninja-clang-sanity` and `ninja-clang-small`
+(`--tests` follows the same rule as `-Tests`, with `ninja-clang-small`);
+`VK_DRIVER_FILES` defaults to the lavapipe ICD. The `display` tests run only with `--gui` and an X
+display in `DISPLAY` (WSLg under WSL 2, or `xvfb-run -a -s "-screen 0 1920x1080x24"` as in CI). Logs
+go to `<root>/_build/sanity-linux/`.
 
 ## Checks
 
