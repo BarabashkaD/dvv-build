@@ -179,7 +179,8 @@ is the path of the repository folder.
 ## CI
 
 `.github/workflows/dvv-ci.yml` is the reusable workflow (Windows MSVC and Linux Clang builds with
-AddressSanitizer and ThreadSanitizer variants, and a lint job):
+AddressSanitizer and ThreadSanitizer variants, and a lint job). On Windows, Debug and Release run as
+separate jobs (`windows-msvc`, `windows-msvc-release`):
 
 ```yaml
 concurrency:                      # newer PR pushes cancel older runs; a running main run finishes
