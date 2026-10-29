@@ -85,6 +85,18 @@
     { "name": "vs2026-release", "inherits": "dvv-test-settings", "configurePreset": "vs2026", "configuration": "Release" },
     { "name": "vs2026-asan", "inherits": "dvv-test-settings", "configurePreset": "vs2026-asan", "configuration": "Debug" },
     { "name": "ninja-clang", "inherits": "dvv-test-settings", "configurePreset": "ninja-clang", "configuration": "Debug" },
+    {
+      "name": "ninja-clang-sanity",
+      "displayName": "Sanity cycle: the fast tests labelled sanity",
+      "inherits": "ninja-clang",
+      "filter": { "include": { "label": "sanity" } }
+    },
+    {
+      "name": "ninja-clang-small",
+      "displayName": "Small cycle: every test except those labelled package",
+      "inherits": "ninja-clang",
+      "filter": { "exclude": { "label": "package" } }
+    },
     { "name": "ninja-clang-release", "inherits": "dvv-test-settings", "configurePreset": "ninja-clang", "configuration": "Release" },
     { "name": "ninja-clang-asan", "inherits": "dvv-test-settings", "configurePreset": "ninja-clang-asan", "configuration": "Debug" },
     { "name": "ninja-clang-tsan", "inherits": "dvv-test-settings", "configurePreset": "ninja-clang-tsan", "configuration": "Debug" }

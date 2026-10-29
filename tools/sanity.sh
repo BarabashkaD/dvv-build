@@ -6,7 +6,7 @@
 # the app (the folder above a libs/ root whose .gitmodules holds libs/dvv-build, as in bootstrap.sh).
 # For each one: configures its ninja-clang tree (<root>/_build/<name>/ninja-clang) if it does not
 # exist yet, builds it incrementally (cmake --build --preset ninja-clang) and runs
-# ctest --preset ninja-clang -L sanity with the GPU settings (DVV_REQUIRE_GPU=1,
+# ctest --preset ninja-clang-sanity with the GPU settings (DVV_REQUIRE_GPU=1,
 # DVV_VK_VALIDATION=sync, DVV_VK_VALIDATION_REQUIRED=1 and the validation layer of
 # <root>/_third_party/clang). VK_DRIVER_FILES defaults to the lavapipe ICD when the caller has not
 # set it. dvv-build runs only its own dvv_build.* tests.
@@ -18,12 +18,22 @@ set -u -o pipefail
 
 usage() {
     cat <<'EOF'
-Usage: sanity.sh [--repo <name>[,<name>...]]... [--gui]
+Usage: sanity.sh [--repo <name>[,<name>...]]... [--gui] [--small] [--downstream] [--tests <regex>]
 
-  --repo  the repositories to check: dvv-build, names from repos.txt or the app's folder name
-          (repeatable or comma-separated). Default: every one that is cloned.
-  --gui   also runs the sanity tests labelled display; needs DISPLAY (an X server, e.g. WSLg or
-          Xvfb). Without it, or without DISPLAY, the display tests are left out.
+  --repo        the repositories to check: dvv-build, names from repos.txt or the app's folder
+                name (repeatable or comma-separated). Default: every one that is cloned.
+  --gui         also runs the sanity tests labelled display; needs DISPLAY (an X server, e.g.
+                WSLg or Xvfb). Without it, or without DISPLAY, the display tests are left out.
+  --small       the small cycle (T1): ninja-clang-small (every test except those labelled
+                package) instead of ninja-clang-sanity in the selected repositories and in the
+                app; repositories added by --downstream between them keep ninja-clang-sanity.
+  --downstream  also checks every cloned repository after the first selected one in the sanity
+                order (repos.txt, then the app): the users of a changed library.
+  --tests       a regular expression passed on as ctest -R. Needs exactly one repository given
+                with --repo; there it tests with ninja-clang-small (every test except those
+                labelled package) and -R <regex> (in dvv-build it replaces the default
+                ^dvv_build\. filter). Repositories added by --downstream keep their usual preset
+                and get no -R. An empty value is an error.
 EOF
 }
 
@@ -51,8 +61,11 @@ app=$(dirname "$root")
 if [[ $(basename "$root") == libs && -f $app/.gitmodules && -e $app/.git ]] &&
     grep -Eq '^[[:space:]]*path[[:space:]]*=[[:space:]]*libs/dvv-build[[:space:]]*$' \
         <(tr -d '\r' <"$app/.gitmodules"); then
-    known+=("$(basename "$app")")
+    app_name=$(basename "$app")
+    known+=("$app_name")
     dirs+=("$app")
+else
+    app_name=
 fi
 
 # The work tree of a known name.
@@ -66,6 +79,9 @@ dir_of() {
 
 requested=()
 gui=0
+small=0
+downstream=0
+test_regex=
 while (($# > 0)); do
     case $1 in
     --repo)
@@ -78,10 +94,24 @@ while (($# > 0)); do
         shift 2
         ;;
     --gui) gui=1; shift ;;
+    --small) small=1; shift ;;
+    --downstream) downstream=1; shift ;;
+    --tests)
+        (($# >= 2)) || { usage >&2; exit 2; }
+        [[ -n $2 ]] || { echo "sanity: --tests needs a non-empty regular expression (ctest -R)" >&2; exit 2; }
+        test_regex=$2
+        shift 2
+        ;;
     -h | --help) usage; exit 0 ;;
     *) echo "sanity: unknown argument: $1" >&2; usage >&2; exit 2 ;;
     esac
 done
+
+if [[ -n $test_regex ]] && ((${#requested[@]} != 1)); then
+    echo "sanity: --tests needs exactly one repository given with --repo (e.g. --repo dvv-base --tests <regex>)" >&2
+    usage >&2
+    exit 2
+fi
 
 is_known() {
     local k
@@ -104,6 +134,44 @@ else
     for i in "${!known[@]}"; do
         [[ -e ${dirs[i]}/.git ]] && selected+=("${known[i]}")
     done
+fi
+named=("${selected[@]}")
+
+is_named() {
+    local k
+    for k in "${named[@]}"; do [[ $k == "$1" ]] && return 0; done
+    return 1
+}
+
+if ((downstream && ${#selected[@]} > 0)); then
+    selected=()
+    after=0
+    for i in "${!known[@]}"; do
+        [[ ${known[i]} == "${named[0]}" ]] && after=1
+        if ((after)) && { is_named "${known[i]}" || [[ -e ${dirs[i]}/.git ]]; }; then
+            selected+=("${known[i]}")
+        fi
+    done
+fi
+
+# The test preset of a repository: --small applies to the selected repositories and the app;
+# --tests to its one named repository, which also gets -R <regex>.
+preset_of() {
+    if { [[ -n $test_regex ]] && is_named "$1"; } ||
+        { ((small)) && { is_named "$1" || [[ -n $app_name && $1 == "$app_name" ]]; }; }; then
+        printf 'ninja-clang-small'
+    else
+        printf 'ninja-clang-sanity'
+    fi
+}
+if ((small || downstream)) || [[ -n $test_regex ]]; then
+    plan=
+    for name in "${selected[@]}"; do
+        filter=
+        [[ -n $test_regex ]] && is_named "$name" && filter=", -R $test_regex"
+        plan+="${plan:+, }$name ($(preset_of "$name")$filter)"
+    done
+    echo "sanity: $plan"
 fi
 
 export DVV_REQUIRE_GPU=1 DVV_VK_VALIDATION=sync DVV_VK_VALIDATION_REQUIRED=1
@@ -168,8 +236,12 @@ for name in "${selected[@]}"; do
     test_time=0.0
     if ((code == 0)); then
         stage=tests
-        tests=(--preset ninja-clang -L sanity "${display_filter[@]}")
-        [[ $name == dvv-build ]] && tests+=(-R '^dvv_build\.')
+        tests=(--preset "$(preset_of "$name")" "${display_filter[@]}")
+        if [[ -n $test_regex ]] && is_named "$name"; then
+            tests+=(-R "$test_regex")
+        elif [[ $name == dvv-build ]]; then
+            tests+=(-R '^dvv_build\.')
+        fi
         test_start=$(now)
         run_logged "$log" "$dir" ctest "${tests[@]}"
         code=$?

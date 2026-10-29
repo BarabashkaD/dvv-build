@@ -23,11 +23,26 @@
     string).
 .PARAMETER NoGui
     Leaves out the tests labelled display (ctest -LE display), for a locked or headless desktop.
+.PARAMETER Small
+    The small cycle (T1): tests with vs2026-small (every test except those labelled package) instead
+    of vs2026-sanity in the selected repositories and in the app; repositories added by -Downstream
+    between them keep vs2026-sanity.
+.PARAMETER Downstream
+    Also checks every present repository after the first selected one in the sanity order (repos.txt,
+    then the app): the users of a changed library.
+.PARAMETER Tests
+    A regular expression passed on as ctest -R (T0 "relevant only"). Needs exactly one repository
+    given with -Repo; there it tests with vs2026-small (every test except those labelled package)
+    and -R <regex> (in dvv-build it replaces the default ^dvv_build\. filter). Repositories added by
+    -Downstream keep their usual preset and get no -R. An empty value is an error.
 #>
 [CmdletBinding()]
 param(
     [string[]] $Repo,
-    [switch] $NoGui
+    [switch] $NoGui,
+    [switch] $Small,
+    [switch] $Downstream,
+    [string] $Tests
 )
 $ErrorActionPreference = 'Stop'
 
@@ -45,7 +60,10 @@ $gitmodules = $app ? (Join-Path $app '.gitmodules') : ''
 if ((Split-Path $root -Leaf) -eq 'libs' -and $gitmodules -and (Test-Path $gitmodules) -and
     (Test-Path (Join-Path $app '.git')) -and
     ((Get-Content $gitmodules -Raw) -match '(?m)^\s*path\s*=\s*libs/dvv-build\s*$')) {
-    $dirs[(Split-Path $app -Leaf)] = $app
+    $appName = Split-Path $app -Leaf
+    $dirs[$appName] = $app
+} else {
+    $appName = ''
 }
 $known = @($dirs.Keys)
 
@@ -62,6 +80,10 @@ function Test-Changed {
 }
 
 $Repo = @($Repo -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+if ($PSBoundParameters.ContainsKey('Tests')) {
+    if (-not $Tests) { throw '-Tests needs a non-empty regular expression (ctest -R)' }
+    if ($Repo.Count -ne 1) { throw '-Tests needs exactly one repository given with -Repo (e.g. -Repo dvv-base -Tests <regex>)' }
+}
 if ($Repo) {
     $unknown = @($Repo | Where-Object { $_ -notin $known })
     if ($unknown) { throw "Unknown repository: $($unknown -join ', '). Known: $($known -join ', ')" }
@@ -72,6 +94,25 @@ if ($Repo) {
     $present = @($known | Where-Object { Test-Present $_ })
     $selected = @($present | Where-Object { Test-Changed $dirs[$_] })
     if (-not $selected) { $selected = $present }
+}
+$named = @($selected)
+if ($Downstream -and $selected) {
+    $first = $known.IndexOf($selected[0])
+    $selected = @($known | Where-Object { $known.IndexOf($_) -ge $first -and ($_ -in $named -or (Test-Present $_)) })
+}
+# The test preset of each repository: -Small applies to the selected repositories and the app;
+# -Tests to its one named repository, which also gets -R <regex>.
+$presetOf = @{}
+foreach ($name in $selected) {
+    $useSmall = ($Tests -and $name -in $named) -or ($Small -and ($name -in $named -or $name -eq $appName))
+    $presetOf[$name] = $useSmall ? 'vs2026-small' : 'vs2026-sanity'
+}
+if ($Small -or $Downstream -or $Tests) {
+    $plan = ($selected | ForEach-Object {
+            $filter = ($Tests -and $_ -in $named) ? ", -R $Tests" : ''
+            "$_ ($($presetOf[$_])$filter)"
+        }) -join ', '
+    Write-Host "sanity: $plan"
 }
 
 # Runs a native command with its output appended to the log; returns its exit code.
@@ -116,8 +157,12 @@ try {
             $buildTime.Stop()
             if ($code -eq 0) {
                 $stage = 'tests'
-                $test = @('--preset', 'vs2026-sanity')
-                if ($name -eq 'dvv-build') { $test += @('-R', '^dvv_build\.') }
+                $test = @('--preset', $presetOf[$name])
+                if ($Tests -and $name -in $named) {
+                    $test += @('-R', $Tests)
+                } elseif ($name -eq 'dvv-build') {
+                    $test += @('-R', '^dvv_build\.')
+                }
                 if ($NoGui) { $test += @('-LE', 'display') }
                 $testTime.Start()
                 $code = Invoke-Logged $log ctest $test
