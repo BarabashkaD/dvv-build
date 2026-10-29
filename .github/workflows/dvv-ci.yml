@@ -193,6 +193,7 @@ jobs:
         working-directory: ${{ inputs.repo }}
         env:
           DVV_REQUIRE_GPU: "1"
+          DVV_REQUIRE_FFMPEG: "1"
           DVV_VK_VALIDATION: sync
           DVV_VK_VALIDATION_REQUIRED: "1"
           NO_AT_BRIDGE: "1"
@@ -232,16 +233,14 @@ jobs:
         run: sudo apt-get install -y libgtk-3-dev pkgconf libx11-dev libxcb1-dev libxrandr-dev libwayland-dev zlib1g-dev libpng-dev xvfb xauth
       - name: Privacy lint
         run: cmake "-DREPO=${{ inputs.repo }}" -DMODE=commits -P "$DVV_BUILD/tools/privacy-lint.cmake"
-      # lib: the workflows' dvv-build @vX = the dvv-build line; app: the pins are the tagged
-      # releases, relative submodule URLs, @vX = the pinned dvv-build (needs the network).
-      - name: Check the pins
-        run: cmake "-DREPO=${{ inputs.repo }}" "-DMODE=$DVV_LAYOUT" -P "$DVV_BUILD/tools/check-pins.cmake"
       - name: Fetch the dvv dependencies
         if: env.DVV_LAYOUT == 'lib'
         env:
           DVV_GIT_BASE_URL: ${{ github.server_url }}/${{ github.repository_owner }}
         run: cmake "-DREPO=${{ inputs.repo }}" -P dvv-build/tools/fetch-deps.cmake
+      # Format needs no dependencies, so a failed fetch does not hide its findings.
       - name: Format
+        if: ${{ !cancelled() }}
         working-directory: ${{ inputs.repo }}
         run: git ls-files -z '*.h' '*.cpp' | xargs -0 -r clang-format --dry-run --Werror
       # The same cache entry as the linux-clang build jobs.
@@ -275,3 +274,10 @@ jobs:
           git ls-files -z ':(glob)src/**/*.cpp' ':(glob)tests/*.cpp' ':(glob)tools/*.cpp' \
               ':(exclude,glob)**/*_win32.cpp' ':(exclude,glob)**/*_msw.cpp' |
             xargs -0 -r clang-tidy -p "$GITHUB_WORKSPACE/$DVV_ROOT/_build/$DVV_REPO/ninja-clang" --quiet
+      # Last, so that the steps above run and report while a branch-only override or an untagged pin
+      # exists; the job then fails here. lib: the workflows' dvv-build @vX = the dvv-build line, no
+      # override; app: the pins are the tagged releases, relative submodule URLs, @vX = the pinned
+      # dvv-build, no override in dvv-deps.txt (needs the network).
+      - name: Check the pins
+        if: ${{ !cancelled() }}
+        run: cmake "-DREPO=${{ inputs.repo }}" "-DMODE=$DVV_LAYOUT" -P "$DVV_BUILD/tools/check-pins.cmake"
