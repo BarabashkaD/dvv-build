@@ -4,6 +4,8 @@
 #   # comment
 #   dvv-build <major>.<minor>.<patch>    minimum of this dvv-build (its VERSION file), exactly once
 #   dvv-<x> <major>.<minor>.<patch>      minimum of each dvv dependency, in dependency order
+# A ' @<commit>' after a dvv-<x> version (a branch-only override, see DvvDepsFile.cmake) changes
+# nothing here: the folder <root>/dvv-<x> is used as it is, and its version is checked as usual.
 # The dvv-build line may be anywhere in the file. A repository does not list itself.
 # The dvv root is the folder holding this dvv-build: the parent folder of a library (lib layout) or
 # <app>/libs (app layout). Every dependency is the folder <root>/dvv-<x>; the first declaration of a

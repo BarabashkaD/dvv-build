@@ -8,7 +8,10 @@
 # 2. for each dvv-<x> line: an existing <root>/dvv-<x> must have the same major and a version
 #    >= the minimum (it is never updated); a missing one is cloned at tag v<minimum>, depth 1, from
 #    <base URL>/dvv-<x>, and its version must be exactly the minimum. The base URL is
-#    DVV_GIT_BASE_URL (-D or environment), else the library's origin URL without its last path component;
+#    DVV_GIT_BASE_URL (-D or environment), else the library's origin URL without its last path component.
+#    A line with a branch-only override ' @<commit>' instead fetches exactly that commit (depth 1) into
+#    a missing folder, verifies the checkout and requires a version >= the minimum (same major); an
+#    existing folder must be checked out at that commit;
 # 3. checks the rule "a repository's minimum for X >= the minimum for X of each of its dvv
 #    dependencies" for every dependency's own dvv-deps.txt (X = dvv-build or a dvv library), and that
 #    the library lists every dvv library its dependencies list. A dependency above its minimum is
@@ -103,20 +106,88 @@ string(REGEX REPLACE "/+$" "" base_url "${base_url}")
 set(present "")
 foreach(dep IN LISTS lib_repos)
     set(min "${lib_min_${dep}}")
+    set(commit "${lib_commit_${dep}}")
     set(dir "${root}/${dep}")
     if(EXISTS "${dir}")
+        if(NOT commit STREQUAL "")
+            # The override is checked first: the folder's commit decides, its version comes second.
+            execute_process(COMMAND "${GIT_EXECUTABLE}" -C "${dir}" rev-parse HEAD
+                            OUTPUT_VARIABLE head ERROR_QUIET OUTPUT_STRIP_TRAILING_WHITESPACE)
+            if(NOT head STREQUAL commit)
+                if(head STREQUAL "")
+                    set(head "no git commit")
+                endif()
+                add_error("${REPO} overrides ${dep} with commit ${commit}, but ${dir} is at ${head}: set "
+                          "the override to that folder's commit (`git -C ${dir} rev-parse HEAD`), check out "
+                          "${commit} there, or remove that folder and run this script again")
+                continue()
+            endif()
+        endif()
         version_of(found "${dir}")
         dvv_version_meets(ok "${found}" "${min}")
         if(found STREQUAL "")
             set(found "no version (no project(... VERSION) in CMakeLists.txt)")
         endif()
-        if(NOT ok)
+        if(NOT ok AND NOT commit STREQUAL "")
+            add_error("${dep} commit ${commit} at ${dir} has project version '${found}', but ${REPO} "
+                      "needs ${dep} >= ${min} (same major): override a later commit or lower the minimum")
+            continue()
+        elseif(NOT ok)
             add_error("${REPO} needs ${dep} >= ${min} (same major), found ${found} at ${dir}: check it "
                       "out at a matching tag (`git -C ${dir} fetch --tags` and `git -C ${dir} checkout "
                       "v${min}`) or remove that folder and run this script again")
             continue()
         endif()
-        message(STATUS "fetch-deps: ${dep} ${found} present at ${dir} (minimum ${min})")
+        if(NOT commit STREQUAL "")
+            message(STATUS "fetch-deps: ${dep} ${found} present at ${dir} at the override commit ${commit} "
+                           "(minimum ${min})")
+        else()
+            message(STATUS "fetch-deps: ${dep} ${found} present at ${dir} (minimum ${min})")
+        endif()
+    elseif(NOT commit STREQUAL "")
+        # The branch-only override: fetch exactly that commit (depth 1) instead of the tag.
+        set(url "${base_url}/${dep}")
+        dvv_hide_credentials(shown "${url}")
+        set(steps "init|-q|${dir}" "-C|${dir}|remote|add|origin|${url}"
+                  "-C|${dir}|-c|credential.interactive=never|fetch|-q|--depth|1|origin|${commit}"
+                  "-C|${dir}|-c|advice.detachedHead=false|checkout|-q|--detach|FETCH_HEAD")
+        set(out "")
+        foreach(step IN LISTS steps)
+            string(REPLACE "|" ";" step "${step}")
+            execute_process(COMMAND "${GIT_EXECUTABLE}" ${step}
+                            RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
+            if(NOT rc EQUAL 0)
+                string(STRIP "${out}${err}" out)
+                dvv_hide_credentials(out "${out}")
+                if(out STREQUAL "")
+                    set(out "git failed (${rc})")
+                endif()
+                break()
+            endif()
+            set(out "")
+        endforeach()
+        if(out STREQUAL "")
+            execute_process(COMMAND "${GIT_EXECUTABLE}" -C "${dir}" rev-parse HEAD
+                            OUTPUT_VARIABLE head ERROR_QUIET OUTPUT_STRIP_TRAILING_WHITESPACE)
+            if(NOT head STREQUAL commit)
+                set(out "the checkout is at '${head}', not at ${commit}")
+            endif()
+        endif()
+        if(NOT out STREQUAL "")
+            file(REMOVE_RECURSE "${dir}")
+            add_error("could not check out ${dep} commit ${commit} (the override in ${REPO}/dvv-deps.txt) "
+                      "from ${shown}: ${out} - check the commit is pushed there or set DVV_GIT_BASE_URL")
+            continue()
+        endif()
+        version_of(found "${dir}")
+        dvv_version_meets(ok "${found}" "${min}")
+        if(NOT ok)
+            add_error("${dep} commit ${commit} from ${shown} has project version '${found}', but ${REPO} "
+                      "needs ${dep} >= ${min} (same major): override a later commit or lower the minimum")
+            continue()
+        endif()
+        message(STATUS "fetch-deps: ${dep}: checked out commit ${commit} (version ${found}, override of "
+                       "v${min}) from ${shown}")
     else()
         set(url "${base_url}/${dep}")
         dvv_hide_credentials(shown "${url}")
@@ -152,7 +223,10 @@ foreach(dep IN LISTS present)
     set(above "")
     set(text_args "")
     set(where "${dir}/dvv-deps.txt")
-    if(NOT dep_version STREQUAL min)
+    if(NOT lib_commit_${dep} STREQUAL "")
+        # An override is checked as checked out: its work tree is what the build uses.
+        set(at "${dep} ${dep_version} (commit ${lib_commit_${dep}})")
+    elseif(NOT dep_version STREQUAL min)
         set(tagged FALSE)
         if(EXISTS "${dir}/.git")
             execute_process(COMMAND "${GIT_EXECUTABLE}" -C "${dir}" rev-parse -q --verify "refs/tags/v${min}"
@@ -184,15 +258,25 @@ foreach(dep IN LISTS present)
     # Each check is <x>|<the library's minimum>|<the dependency's minimum>.
     set(checks "dvv-build|${lib_build_min}|${dep_build_min}")
     foreach(x IN LISTS dep_repos)
+        set(line "${x} ${dep_min_${x}}")
+        if(NOT dep_commit_${x} STREQUAL "")
+            set(line "${line} @${dep_commit_${x}}")
+        endif()
         if(NOT x IN_LIST lib_repos)
             if(NOT above STREQUAL "")
                 add_error("${above} needs ${x}, which ${REPO}/dvv-deps.txt does not list: check out ${dep} "
-                          "v${min} or add '${x} ${dep_min_${x}}' before the ${dep} line")
+                          "v${min} or add '${line}' before the ${dep} line")
             else()
-                add_error("${at} needs ${x}, which ${REPO}/dvv-deps.txt does not list: add '${x} "
-                          "${dep_min_${x}}' before the ${dep} line")
+                add_error("${at} needs ${x}, which ${REPO}/dvv-deps.txt does not list: add '${line}' "
+                          "before the ${dep} line")
             endif()
             continue()
+        endif()
+        # A dependency's own override must be repeated exactly (the clones are shallow, so no ancestry
+        # check): the library then carries it as a direct override, which check-pins rejects.
+        if(NOT dep_commit_${x} STREQUAL "" AND NOT lib_commit_${x} STREQUAL dep_commit_${x})
+            add_error("${at} overrides ${x} with ${dep_commit_${x}}: add ' @${dep_commit_${x}}' to the ${x} "
+                      "line of ${REPO}/dvv-deps.txt")
         endif()
         list(APPEND checks "${x}|${lib_min_${x}}|${dep_min_${x}}")
     endforeach()
