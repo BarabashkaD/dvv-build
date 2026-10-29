@@ -5,6 +5,19 @@ versions follow semantic versioning with the dvv rules: compatible = the same ma
 minimum version, also for 0.x; breaking changes only in a new major, after a deprecation. This file is
 the release notes (there are no GitHub Releases).
 
+## [0.1.1] - 2026-10-29
+
+### Changed
+- CI (`dvv-ci.yml`): Windows Debug and Release run as separate, parallel jobs, `windows-msvc` and
+  the new `windows-msvc-release`; each runs the configure, build and test steps of its
+  configuration. The Windows leg of an application run with the library tests takes about 44 min
+  instead of 85-111 min. A caller that requires the CI checks should add `windows-msvc-release`.
+- LICENSE: the copyright line names BarabashkaD.
+
+### Fixed
+- Privacy lint: a commit whose author is `noreply@github.com` is a finding with its own message;
+  GitHub's address stays accepted as the committer of web and pull-request merge commits.
+
 ## [0.1.0] - 2026-10-28
 
 First versioned release.
