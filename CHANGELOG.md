@@ -5,6 +5,27 @@ versions follow semantic versioning with the dvv rules: compatible = the same ma
 minimum version, also for 0.x; breaking changes only in a new major, after a deprecation. This file is
 the release notes (there are no GitHub Releases).
 
+## [0.1.2] - 2026-10-29
+
+### Added
+- Branch-only dependency override: a `dvv-deps.txt` line may end with ` @<commit>` (40 lowercase hex
+  digits) after the version, so a workstream branch can test against an untagged dependency commit.
+  `fetch-deps.cmake` checks out that commit and still checks the minimum version; an overridden
+  dependency's own overrides must be repeated in the library. The dvv-build line takes no override.
+- `check-pins.cmake` rejects every override (in a library, in an application's own `dvv-deps.txt` and in
+  each pinned library's), so main depends only on tagged versions; the lint job runs it as its last
+  step, after the format and clang-tidy steps.
+- Test presets `ninja-clang-sanity` and `ninja-clang-small`, the Linux twins of `vs2026-sanity` and
+  `vs2026-small`.
+- `sanity.ps1` / `sanity.sh`: `-Small`/`--small` (the small presets), `-Downstream`/`--downstream`
+  (also every later repository in the sanity order) and `-Tests`/`--tests <regex>` (one repository,
+  passed on as `ctest -R`). Without them the scripts behave as before.
+
+### Changed
+- CI: the Linux build and test step sets `DVV_REQUIRE_FFMPEG=1`, so a missing FFmpeg fails the FFmpeg
+  tests instead of skipping them (as on Windows).
+- README: the test tiers T0/T1/T2/CI, the new switches, "main depends on tags only" and the override.
+
 ## [0.1.1] - 2026-10-29
 
 ### Changed
