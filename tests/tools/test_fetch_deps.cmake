@@ -19,6 +19,8 @@ function(run_git)
     if(NOT rc EQUAL 0)
         message(FATAL_ERROR "git ${ARGN} failed:\n${out}${err}")
     endif()
+    string(STRIP "${out}" out)
+    set(git_out "${out}" PARENT_SCOPE)
 endfunction()
 
 function(identity dir)
@@ -114,6 +116,15 @@ if(remote MATCHES "^/")
 else()
     set(file_url "file:///${remote}")
 endif()
+# An untagged dvv-base 0.2.1 commit on a branch (not on main): the target of the branch-only overrides.
+run_git(-C "${work}" checkout -q -b feature v0.2.0)
+file(WRITE "${work}/CMakeLists.txt"
+     "cmake_minimum_required(VERSION 4.2)\nproject(dvv_base VERSION 0.2.1 LANGUAGES NONE)\n")
+run_git(-C "${work}" commit -q -am "dvv-base 0.2.1 on a branch")
+run_git(-C "${work}" push -q origin feature)
+run_git(-C "${work}" rev-parse HEAD)
+set(feature_sha "${git_out}")
+run_git(-C "${work}" checkout -q main)
 
 # expect_absent(<regex>): the output of the last expect() does not match <regex>.
 function(expect_absent regex)
@@ -290,6 +301,80 @@ foreach(tool fetch-deps check-pins)
         set(failures 1)
     endif()
 endforeach()
+
+# Branch-only override ' @<commit>': exactly that commit is fetched (shallow over a URL) instead of the
+# tag, its version only has to meet the minimum, the dependencies' minimums are read at that commit, and
+# a second run accepts the folder at that commit.
+new_root(override 0.1.0)
+new_lib(dvv-gpu "dvv-build 0.1.0\ndvv-base 0.2.0 @${feature_sha}\ndvv-platform 0.1.0\n" "")
+expect(dvv-gpu 0 "dvv-base: checked out commit ${feature_sha} \\(version 0.2.1, override of v0.2.0\\) from file:.*dvv-platform: cloned v0.1.0"
+       "-DDVV_GIT_BASE_URL=${file_url}")
+expect_version("${root}/dvv-base" 0.2.1)
+run_git(-C "${root}/dvv-base" rev-parse --is-shallow-repository)
+if(NOT git_out STREQUAL "true")
+    message(SEND_ERROR "FAIL: the override checkout of dvv-base is not shallow")
+    set(failures 1)
+endif()
+expect(dvv-gpu 0 "dvv-base 0.2.1 present at .* at the override commit ${feature_sha} \\(minimum 0.2.0\\)"
+       "-DDVV_GIT_BASE_URL=${file_url}")
+# The commit's version is below the minimum.
+new_root(override_too_low 0.1.0)
+new_lib(dvv-gpu "dvv-build 0.1.0\ndvv-base 0.3.0 @${feature_sha}\n" "${remote}/dvv-gpu")
+expect(dvv-gpu 1 "dvv-base commit ${feature_sha} from .* has project version '0.2.1', but dvv-gpu needs dvv-base >= 0.3.0 \\(same major\\)")
+# A commit the origin does not have: a clear error, and no folder is left behind.
+new_root(override_unknown 0.1.0)
+set(unknown_sha "0123456789abcdef0123456789abcdef01234567")
+new_lib(dvv-gpu "dvv-build 0.1.0\ndvv-base 0.2.0 @${unknown_sha}\n" "${remote}/dvv-gpu")
+expect(dvv-gpu 1 "could not check out dvv-base commit ${unknown_sha} \\(the override in dvv-gpu/dvv-deps.txt\\) from .*check the commit is pushed there")
+if(EXISTS "${root}/dvv-base")
+    message(SEND_ERROR "FAIL: a failed override checkout left ${root}/dvv-base behind")
+    set(failures 1)
+endif()
+# An existing folder at another commit is reported, not updated.
+new_root(override_mismatch 0.1.0)
+run_git(clone -q --branch v0.2.0 "${remote}/dvv-base" "${root}/dvv-base")
+run_git(-C "${root}/dvv-base" rev-parse HEAD)
+set(tag_sha "${git_out}")
+new_lib(dvv-gpu "dvv-build 0.1.0\ndvv-base 0.2.0 @${feature_sha}\n" "${remote}/dvv-gpu")
+expect(dvv-gpu 1 "dvv-gpu overrides dvv-base with commit ${feature_sha}, but .*/dvv-base is at ${tag_sha}: set the override to that folder's commit")
+# The commit is checked before the version: an existing folder below the minimum on another commit gets
+# the override advice, not the tag advice.
+new_root(override_mismatch_low 0.1.0)
+run_git(clone -q --branch v0.1.0 "${remote}/dvv-base" "${root}/dvv-base")
+new_lib(dvv-gpu "dvv-build 0.1.0\ndvv-base 0.2.0 @${feature_sha}\n" "${remote}/dvv-gpu")
+expect(dvv-gpu 1 "dvv-gpu overrides dvv-base with commit ${feature_sha}, but .*/dvv-base is at [0-9a-f]+: set the override")
+expect_absent("checkout v0\\.2\\.0")
+# A malformed override is a parse error.
+new_root(override_bad 0.1.0)
+new_lib(dvv-gpu "dvv-build 0.1.0\ndvv-base 0.2.0 @abc\n" "${remote}/dvv-gpu")
+expect(dvv-gpu 1 "bad override '@abc' in line 'dvv-base 0.2.0 @abc'")
+# A dependency's own override must be repeated exactly. A dvv-platform branch commit overrides dvv-base.
+set(work "${WORK_DIR}/work/dvv-platform")
+run_git(-C "${work}" checkout -q -b feature v0.1.0)
+file(WRITE "${work}/dvv-deps.txt" "dvv-build 0.1.0\ndvv-base 0.1.0 @${feature_sha}\n")
+run_git(-C "${work}" commit -q -am "dvv-platform with a dvv-base override")
+run_git(-C "${work}" push -q origin feature)
+run_git(-C "${work}" rev-parse HEAD)
+set(platform_sha "${git_out}")
+run_git(-C "${work}" checkout -q main)
+run_git(-C "${WORK_DIR}/work/dvv-base" rev-parse main)
+set(base_main_sha "${git_out}")
+# (a) not repeated, (b) repeated, (c) overridden with a different commit.
+new_root(override_transitive 0.1.0)
+new_lib(dvv-gpu "dvv-build 0.1.0\ndvv-base 0.1.0\ndvv-platform 0.1.0 @${platform_sha}\n" "${remote}/dvv-gpu")
+expect(dvv-gpu 1 "overrides dvv-base with ${feature_sha}: add ' @${feature_sha}' to the dvv-base line of dvv-gpu/dvv-deps\\.txt")
+new_root(override_transitive_ok 0.1.0)
+new_lib(dvv-gpu "dvv-build 0.1.0\ndvv-base 0.1.0 @${feature_sha}\ndvv-platform 0.1.0 @${platform_sha}\n"
+        "${remote}/dvv-gpu")
+expect(dvv-gpu 0 "dvv-platform: checked out commit ${platform_sha}")
+new_root(override_transitive_other 0.1.0)
+new_lib(dvv-gpu "dvv-build 0.1.0\ndvv-base 0.1.0 @${base_main_sha}\ndvv-platform 0.1.0 @${platform_sha}\n"
+        "${remote}/dvv-gpu")
+expect(dvv-gpu 1 "overrides dvv-base with ${feature_sha}: add ' @${feature_sha}'")
+# A dependency's override that the library does not list is suggested with the override.
+new_root(override_transitive_missing 0.1.0)
+new_lib(dvv-gpu "dvv-build 0.1.0\ndvv-platform 0.1.0 @${platform_sha}\n" "${remote}/dvv-gpu")
+expect(dvv-gpu 1 "does not list: add 'dvv-base 0\\.1\\.0 @${feature_sha}' before the dvv-platform line")
 
 if(failures)
     message(FATAL_ERROR "fetch-deps tests failed")

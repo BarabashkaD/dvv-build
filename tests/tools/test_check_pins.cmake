@@ -112,6 +112,12 @@ file(WRITE "${lib}/dvv-deps.txt" "dvv-build 0.1.0\ndvv-build 0.1.0\n")
 expect("${lib}" 1 "lists dvv-build twice")
 file(WRITE "${lib}/dvv-deps.txt" "dvv-build 0.1.0\ndvv-gpu 0.1.0\n")
 expect("${lib}" 1 "lists dvv-gpu itself")
+# A branch-only override is a finding: main depends on tags only.
+set(sha "0123456789abcdef0123456789abcdef01234567")
+file(WRITE "${lib}/dvv-deps.txt" "dvv-build 0.1.0\ndvv-base 0.1.0 @${sha}\n")
+expect("${lib}" 1 "dvv-deps.txt: dvv-base 0.1.0 @${sha} is a branch-only override: back on tags before merge")
+file(WRITE "${lib}/dvv-deps.txt" "dvv-build 0.1.0 @${sha}\n")
+expect("${lib}" 1 "the dvv-build line takes no override")
 file(REMOVE "${lib}/dvv-deps.txt")
 expect("${lib}" 1 "dvv-deps.txt does not exist")
 expect("${lib}" 1 "MODE must be lib or app" -DMODE=other)
@@ -150,12 +156,50 @@ run_git(-C "${app}" commit -q -m "app")
 expect("${app}" 0 "app mode.*libs/dvv-build 0.1.0 = tag v0.1.0.*libs/dvv-base 0.1.0 = tag v0.1.0")
 expect("${app}" 0 "libs/dvv-base" -DMODE=app)
 
+# As in CI (actions/checkout with submodules: recursive): a shallow clone with shallow submodules and
+# local tags removed (the worst case); the tags are resolved on the origins.
+run_git(init -q --bare -b main "${remote}/rawreel")
+run_git(-C "${app}" push -q origin HEAD:refs/heads/main)
+if(remote MATCHES "^/")
+    set(remote_url "file://${remote}")
+else()
+    set(remote_url "file:///${remote}")
+endif()
+set(shallow "${WORK_DIR}/shallow/rawreel")
+run_git(-c protocol.file.allow=always clone -q --depth 1 --no-tags --recurse-submodules
+        --shallow-submodules "${remote_url}/rawreel" "${shallow}")
+foreach(sub IN ITEMS dvv-build dvv-base)
+    run_git(-C "${shallow}/libs/${sub}" rev-parse --is-shallow-repository)
+    if(NOT git_out STREQUAL "true")
+        message(SEND_ERROR "FAIL: libs/${sub} of the shallow clone is not shallow")
+        math(EXPR failures "${failures} + 1")
+    endif()
+    run_git(-C "${shallow}/libs/${sub}" tag -l)
+    if(NOT git_out STREQUAL "")
+        string(REPLACE "\n" ";" shallow_tags "${git_out}")
+        run_git(-C "${shallow}/libs/${sub}" tag -d ${shallow_tags})
+    endif()
+endforeach()
+expect("${shallow}" 0 "libs/dvv-build 0.1.0 = tag v0.1.0.*libs/dvv-base 0.1.0 = tag v0.1.0")
+# The same shallow, tag-less clone with an untagged pin fails.
+run_git(-C "${shallow}/libs/dvv-base" fetch -q --depth 1 origin "${base_untagged}")
+run_git(-C "${shallow}/libs/dvv-base" checkout -q "${base_untagged}")
+identity("${shallow}")
+run_git(-C "${shallow}" commit -q -am "pin 0.1.1")
+expect("${shallow}" 1 "libs/dvv-base: pin ${base_untagged} \\(version 0.1.1\\) is not tagged: origin has no tag v0.1.1")
+
 # The version comes from the pinned commit, not from an edited work tree.
 file(WRITE "${app}/libs/dvv-base/CMakeLists.txt" "project(dvv_base VERSION 0.9.0 LANGUAGES NONE)\n")
 file(WRITE "${app}/libs/dvv-build/VERSION" "0.9.0\n")
 expect("${app}" 0 "libs/dvv-build 0.1.0 = tag v0.1.0.*libs/dvv-base 0.1.0 = tag v0.1.0")
 run_git(-C "${app}/libs/dvv-base" checkout -q -- CMakeLists.txt)
 run_git(-C "${app}/libs/dvv-build" checkout -q -- VERSION)
+
+# A branch-only override in the app's own dvv-deps.txt: the app moves the submodule instead.
+set(fake_sha "0123456789abcdef0123456789abcdef01234567")
+file(WRITE "${app}/dvv-deps.txt" "dvv-build 0.1.0\ndvv-base 0.1.0 @${fake_sha}\n")
+expect("${app}" 1 "dvv-deps.txt: dvv-base 0.1.0 @${fake_sha} is a branch-only override: in the app, move the libs/dvv-base submodule instead")
+file(REMOVE "${app}/dvv-deps.txt")
 
 # An origin that cannot be listed.
 run_git(-C "${app}/libs/dvv-base" remote rename origin upstream)
@@ -187,6 +231,14 @@ expect("${app}" 1 "libs/dvv-base: pin ${base_untagged} \\(version 0.1.1\\) is no
 run_git(-C "${app}/libs/dvv-base" checkout -q "${base_later}")
 run_git(-C "${app}" commit -q -am "pin later")
 expect("${app}" 1 "libs/dvv-base: pin ${base_later} has version 0.1.0, but tag v0.1.0 on origin is ${base_tagged}")
+
+# A tagged library release whose dvv-deps.txt still carries an override (a tag on a branch commit).
+file(WRITE "${WORK_DIR}/work/dvv-base/dvv-deps.txt" "dvv-build 0.1.0\ndvv-platform 0.1.0 @${fake_sha}\n")
+publish(dvv-base 0.1.2 annotated)
+run_git(-C "${app}/libs/dvv-base" fetch -q origin)
+run_git(-C "${app}/libs/dvv-base" checkout -q "${dvv_base_sha}")
+run_git(-C "${app}" commit -q -am "pin 0.1.2")
+expect("${app}" 1 "libs/dvv-base: its dvv-deps.txt at the pin ${dvv_base_sha} overrides dvv-platform with ${fake_sha}: pin a release")
 
 # A submodule outside libs/ and a missing checkout.
 run_git(-C "${app}" config -f .gitmodules submodule.libs/dvv-base.path tools/dvv-base)

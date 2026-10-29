@@ -231,7 +231,22 @@ run_case(nested_dep_too_low FAIL BETA_DEPS "dvv-build 0.1.0" "dvv-alpha 0.2.0"
 run_case(build_line_last TOP_DEPS "dvv-alpha 0.1.0" "dvv-beta 0.1.0" "dvv-build 0.1.0"
     EXPECT_ONCE "fixture: dvv_gamma tests=ON ")
 run_case(bad_line FAIL TOP_DEPS "dvv-build 0.1.0" "dvv-alpha 0.1"
-    EXPECT "dvv-deps\\.txt: bad line 'dvv-alpha 0\\.1' \\(expected 'dvv-<name> <major>\\.<minor>\\.<patch>'\\)")
+    EXPECT "dvv-deps\\.txt: bad line 'dvv-alpha 0\\.1' \\(expected 'dvv-<name> <major>\\.<minor>\\.<patch> \\[@<commit>\\]'\\)")
+# A branch-only override ' @<commit>' after a dependency's version is accepted (the folder is used as it
+# is); a short, upper-case or second commit, an override without a commit and one on the dvv-build line
+# are errors.
+set(sha "0123456789abcdef0123456789abcdef01234567")
+run_case(commit_override TOP_DEPS "dvv-build 0.1.0" "dvv-alpha 0.1.0 @${sha}" "dvv-beta 0.1.0\t@${sha} "
+    EXPECT_ONCE "fixture: dvv_gamma tests=ON leaked=\\[\\] build_ver=\\[0\\.1\\.3\\] alpha_min=\\[0\\.1\\.0\\] "
+    EXPECT_NONE "CMake Warning")
+set(bad_index 0)
+foreach(bad IN ITEMS "@0123456789abcdef" "@0123456789ABCDEF0123456789ABCDEF01234567" "@${sha} @${sha}" "@")
+    math(EXPR bad_index "${bad_index} + 1")
+    run_case(bad_override_${bad_index} FAIL TOP_DEPS "dvv-build 0.1.0" "dvv-alpha 0.1.0 ${bad}" "dvv-beta 0.1.0"
+        EXPECT "dvv-gamma: [^ ]*/dvv-deps\\.txt: bad override '${bad}' in line 'dvv-alpha 0\\.1\\.0 ${bad}' \\(expected one ' @<commit>' after the version: 40 lowercase hex digits\\)")
+endforeach()
+run_case(build_override FAIL TOP_DEPS "dvv-build 0.1.0 @${sha}" "dvv-alpha 0.1.0" "dvv-beta 0.1.0"
+    EXPECT "dvv-gamma: [^ ]*/dvv-deps\\.txt: the dvv-build line takes no override \\(CI checks out dvv-build at tag v0\\.1\\.0\\); remove '@${sha}'")
 run_case(no_build_line FAIL TOP_DEPS "dvv-alpha 0.1.0" "dvv-beta 0.1.0"
     EXPECT "dvv-gamma: [^ ]*/dvv-gamma/dvv-deps\\.txt has no dvv-build line; add 'dvv-build <minimum version>'")
 run_case(duplicate FAIL TOP_DEPS "dvv-build 0.1.0" "dvv-alpha 0.1.0" "dvv-beta 0.1.0" "dvv-alpha 0.1.0"

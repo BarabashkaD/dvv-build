@@ -5,12 +5,16 @@
 # Lib mode: every reference to dvv-build's reusable workflows in .github/workflows/*.yml|*.yaml
 #   (a `uses: <owner>/dvv-build/.github/workflows/<file>@v<X>` line, not a comment) has X = the
 #   dvv-build line of dvv-deps.txt (read with cmake/DvvDepsFile.cmake, as DvvDeps.cmake does); there
-#   is at least one.
+#   is at least one. A dvv-deps.txt line with a branch-only override (' @<commit>') is an error: main
+#   depends on tags only, so a branch goes back on tags before merge.
 # App mode: each submodule in .gitmodules has the path libs/dvv-<name> and the relative URL
 #   ../dvv-<name> (no .git suffix); it is checked out at its committed pin; the pin is the commit of
 #   tag v<its version> on its origin (`git ls-remote`, peeled for annotated tags; the version is read
 #   at the pin: VERSION for dvv-build and project(dvv_<name> VERSION ...) for a library); libs/dvv-build
 #   is one of them, and the workflows' dvv-build @v<X> has X = the VERSION of libs/dvv-build's pin.
+#   A branch-only override is an error here too: in the app's own dvv-deps.txt (the app moves the
+#   libs/<name> submodule instead), and in a library's dvv-deps.txt at its pin (a tag placed on a
+#   branch commit that still carries ' @<commit>').
 # All problems are reported together; the script fails if there is any. Git never asks for
 # credentials (it fails instead), and credentials in a URL are not printed.
 cmake_minimum_required(VERSION 4.2)
@@ -82,6 +86,11 @@ endfunction()
 if(MODE STREQUAL "lib")
     cmake_path(GET repo FILENAME who)
     dvv_read_deps_file("${who}" "${repo}/dvv-deps.txt" lib)
+    foreach(dep IN LISTS lib_overrides)
+        add_error("dvv-deps.txt: ${dep} ${lib_min_${dep}} @${lib_commit_${dep}} is a branch-only override: "
+                  "back on tags before merge (tag that ${dep} commit, raise the minimum to its version "
+                  "and remove ' @${lib_commit_${dep}}')")
+    endforeach()
     check_workflows("${lib_build_min}" "dvv-build ${lib_build_min}"
                     "dvv-deps.txt has dvv-build ${lib_build_min}")
 else()
@@ -107,6 +116,19 @@ else()
             endif()
         endif()
     endforeach()
+
+    if(EXISTS "${repo}/dvv-deps.txt")
+        cmake_path(GET repo FILENAME who)
+        dvv_read_deps_file("${who}" "${repo}/dvv-deps.txt" app ERROR_VARIABLE parse_error)
+        if(NOT parse_error STREQUAL "")
+            add_error("${parse_error}")
+        endif()
+        foreach(dep IN LISTS app_overrides)
+            add_error("dvv-deps.txt: ${dep} ${app_min_${dep}} @${app_commit_${dep}} is a branch-only "
+                      "override: in the app, move the libs/${dep} submodule instead and remove "
+                      "' @${app_commit_${dep}}'")
+        endforeach()
+    endif()
 
     set(build_version "")
     set(has_build FALSE)
@@ -152,6 +174,20 @@ else()
                             RESULT_VARIABLE rc OUTPUT_VARIABLE text ERROR_QUIET)
             if(rc EQUAL 0)
                 dvv_project_version(version "${name}" "${text}")
+            endif()
+            # A library's own overrides at the pin (e.g. a tag placed on a branch commit).
+            execute_process(COMMAND "${GIT_EXECUTABLE}" -C "${dir}" show "${pin}:dvv-deps.txt"
+                            RESULT_VARIABLE rc OUTPUT_VARIABLE text ERROR_QUIET)
+            if(rc EQUAL 0)
+                dvv_read_deps_file("${name}" "${path}/dvv-deps.txt" sub TEXT "${text}"
+                                   ERROR_VARIABLE parse_error)
+                if(NOT parse_error STREQUAL "")
+                    add_error("${path}: its dvv-deps.txt at the pin ${pin} is not valid: ${parse_error}")
+                endif()
+                foreach(o IN LISTS sub_overrides)
+                    add_error("${path}: its dvv-deps.txt at the pin ${pin} overrides ${o} with "
+                              "${sub_commit_${o}}: pin a release whose dvv-deps.txt has no override")
+                endforeach()
             endif()
         endif()
         if(name STREQUAL "dvv-build")
