@@ -7,8 +7,27 @@ include_guard(DIRECTORY)
 if(MSVC)
     set(CMAKE_CXX23_STANDARD_COMPILE_OPTION "-std:c++23preview")
     set(CMAKE_CXX23_EXTENSION_COMPILE_OPTION "-std:c++23preview")
+elseif(APPLE)
+    # On macOS only AppleClang 21 or newer (Xcode 27) with its libc++ is supported.
+    if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang" OR CMAKE_CXX_COMPILER_VERSION VERSION_LESS 21)
+        message(FATAL_ERROR "${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION} is not "
+                            "supported; use AppleClang 21 or newer (Xcode 27)")
+    endif()
+    include(CheckCXXSourceCompiles)
+    check_cxx_source_compiles([[
+#include <version>
+#ifndef _LIBCPP_VERSION
+#error "libc++ is required"
+#endif
+int main() {}
+]] DVV_HAS_LIBCXX)
+    if(NOT DVV_HAS_LIBCXX)
+        # Forget the failure so the next configure checks again.
+        unset(DVV_HAS_LIBCXX CACHE)
+        message(FATAL_ERROR "AppleClang must use libc++")
+    endif()
 else()
-    # Outside MSVC only Clang with libstdc++ 14 or newer is supported (spec §2, §17).
+    # Outside MSVC and macOS only Clang with libstdc++ 14 or newer is supported (spec §2, §17).
     if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang" OR CMAKE_CXX_COMPILER_VERSION VERSION_LESS 19)
         message(FATAL_ERROR "${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION} is not "
                             "supported; use Clang 19 or newer")
@@ -46,6 +65,17 @@ if(DVV_SANITIZE)
                             -fno-sanitize-recover=all)
         add_link_options(-fsanitize=${sanitizers})
     endif()
+endif()
+# On macOS every test runs on the prefix's KosmicKrisp driver only (spec U-MAC2), whatever other
+# Vulkan drivers (MoltenVK of an installed SDK) the machine has.
+if(APPLE)
+    find_file(DVV_KOSMICKRISP_MANIFEST libkosmickrisp_icd.json PATHS ${CMAKE_PREFIX_PATH}
+              PATH_SUFFIXES share/vulkan/icd.d NO_DEFAULT_PATH NO_CACHE)
+    if(NOT DVV_KOSMICKRISP_MANIFEST)
+        message(FATAL_ERROR "No share/vulkan/icd.d/libkosmickrisp_icd.json in CMAKE_PREFIX_PATH "
+                            "(${CMAKE_PREFIX_PATH}); run dvv-build's bootstrap.sh")
+    endif()
+    list(APPEND DVV_TEST_ENVIRONMENT "VK_DRIVER_FILES=set:${DVV_KOSMICKRISP_MANIFEST}")
 endif()
 
 # Maps the parent of the top-level source tree (a library's dvv root, or the folder holding the app)

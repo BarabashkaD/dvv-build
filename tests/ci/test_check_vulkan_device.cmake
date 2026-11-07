@@ -74,6 +74,28 @@ check(1 "vulkaninfo lists no Vulkan device" "-DSUMMARY_FILE=${WORK_DIR}/no-devic
 check(1 "MIN_VERSION must be <major>.<minor>, got '1.4.0'"
       "-DSUMMARY_FILE=${WORK_DIR}/lavapipe.txt" -DMIN_VERSION=1.4.0)
 
+# On macOS the check runs the prefix's vulkaninfo (from the LunarG SDK, which dlopens the loader by
+# its bare name) with the prefix's loader and KosmicKrisp only. A fake prefix serves the runs below;
+# a shell script cannot see DYLD_LIBRARY_PATH (macOS strips it for /bin/sh), so the check prints the
+# environment it sets.
+set(host_args "")
+if(CMAKE_HOST_APPLE)
+    set(prefix "${WORK_DIR}/prefix")
+    set(manifest "${prefix}/share/vulkan/icd.d/libkosmickrisp_icd.json")
+    set(host_args "-DPREFIX=${prefix}")
+    file(WRITE "${prefix}/bin/vulkaninfo" "#!/bin/sh
+[ \"$1\" = --summary ] || exit 2
+[ \"$VK_DRIVER_FILES\" = '${manifest}' ] || { echo \"VK_DRIVER_FILES='$VK_DRIVER_FILES'\" >&2; exit 4; }
+cat '${WORK_DIR}/lavapipe.txt'
+")
+    file(CHMOD "${prefix}/bin/vulkaninfo" PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE)
+    check(1 "check-vulkan-device: no KosmicKrisp manifest .*libkosmickrisp_icd\\.json; run bootstrap"
+          ${host_args})
+    file(WRITE "${manifest}" "{}\n")
+    check(0 "VK_DRIVER_FILES=${manifest} DYLD_LIBRARY_PATH=${prefix}/lib .*passed: apiVersion 1.4.318"
+          ${host_args})
+endif()
+
 # A passing check also prints what vulkaninfo wrote to stderr (loader and driver warnings). The fake
 # vulkaninfo is a batch file on Windows and a shell script elsewhere.
 if(CMAKE_HOST_WIN32)
@@ -88,10 +110,10 @@ else()
     file(CHMOD "${fake}" PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE)
 endif()
 check(0 "vulkaninfo wrote to stderr: WARNING: fake loader message .*passed: apiVersion 1.4.318"
-      "-DVULKANINFO=${fake}")
+      "-DVULKANINFO=${fake}" ${host_args})
 
 # A failing vulkaninfo fails the check: cmake itself rejects --summary.
-check(1 "--summary' failed" "-DVULKANINFO=${CMAKE_COMMAND}")
-check(1 "--summary' failed" "-DVULKANINFO=${WORK_DIR}/no-such-program")
+check(1 "--summary' failed" "-DVULKANINFO=${CMAKE_COMMAND}" ${host_args})
+check(1 "--summary' failed" "-DVULKANINFO=${WORK_DIR}/no-such-program" ${host_args})
 
 message(STATUS "check-vulkan-device tests passed")

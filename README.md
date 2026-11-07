@@ -54,7 +54,7 @@ Each library and application lists its dvv dependencies in `dvv-deps.txt`, in de
 
 ```text
 # dvv dependencies: <repository> <minimum version>, dependency order (read by dvv-build).
-dvv-build 0.1.1
+dvv-build 0.2.0
 dvv-base 0.1.0
 dvv-platform 0.1.0
 ```
@@ -104,6 +104,12 @@ dvv-platform 0.1.0
   python3 -m venv ~/.venvs/dvv
   . ~/.venvs/dvv/bin/activate
   ```
+- macOS 27 or newer on Apple Silicon: Xcode 27 (its Apple Clang and libc++ are the only supported
+  toolchain; `DvvCompilerOptions.cmake` checks it), Homebrew and Git. `brew install ninja` and a
+  Python 3 for the tools. The GPU tests run on KosmicKrisp (Mesa's Vulkan driver on Metal), which
+  bootstrap builds into the prefix together with the Vulkan loader and `vulkaninfo`; no Vulkan SDK
+  install is needed. The tools (CMake 4, clang-format and clang-tidy 19) come from pip as on Linux,
+  into a virtual environment that is active in every shell that builds.
 
 ## Building a library alone
 
@@ -111,7 +117,7 @@ dvv-platform 0.1.0
 
 ```powershell
 git clone <base>/dvv-gpu
-git clone --branch v0.1.1 <base>/dvv-build      # the dvv-build line of dvv-gpu/dvv-deps.txt
+git clone --branch v0.2.0 <base>/dvv-build      # the dvv-build line of dvv-gpu/dvv-deps.txt
 git -C dvv-build config user.name <GitHub handle>
 git -C dvv-build config user.email <GitHub noreply e-mail>
 python -m pip install -r dvv-build/tools/requirements.txt
@@ -124,6 +130,10 @@ cmake --workflow --preset vs2026                 # or vs2026-asan (AddressSaniti
 On Linux: `./dvv-build/bootstrap.sh`, then `cmake --workflow --preset ninja-clang` (it also
 builds and tests Release; also `ninja-clang-asan` and `ninja-clang-tsan`).
 
+On macOS: `./dvv-build/bootstrap.sh` (the toolchain defaults to `appleclang`, prefix
+`<root>/_third_party/appleclang`), then `cmake --workflow --preset ninja-macos` (it also builds and
+tests Release; also `ninja-macos-asan`; there is no ThreadSanitizer preset).
+
 - `fetch-deps` clones each missing dependency next to the library at tag `v<minimum>` (depth 1)
   from `DVV_GIT_BASE_URL` (`-D` or environment) or else from the library's origin without its last
   path part. An existing dependency is checked, never updated. `REPO` is the library's folder name
@@ -134,7 +144,7 @@ builds and tests Release; also `ninja-clang-asan` and `ninja-clang-tsan`).
   then builds the third-party dependencies into `<root>/_third_party/<toolchain>` (the first run
   takes 10 to 20 minutes; later runs say "up to date"). `-Toolchain msvc|clang`, `-Force` rebuilds,
   `-BundleFfmpeg OFF` builds application packages without FFmpeg (bash: `--toolchain`, `--force`,
-  `--bundle-ffmpeg`).
+  `--bundle-ffmpeg`; `--toolchain` is `clang` or `appleclang`, the default on macOS).
 - custom_ffmpeg's LGPL shared release is installed into `_third_party/<toolchain>/custom_ffmpeg`.
   FFmpeg is never linked; CMake projects find it with `find_package(dvv_ffmpeg_sdk CONFIG REQUIRED)`.
   The prefix holds `THIRD_PARTY_NOTICES.txt` (what packages ship) and `THIRD_PARTY_NOTICES-all.txt`
@@ -211,9 +221,9 @@ dependency, raise the minimum and remove the override ("back on tags before merg
 
 ## CI
 
-`.github/workflows/dvv-ci.yml` is the reusable workflow (Windows MSVC and Linux Clang builds with
-AddressSanitizer and ThreadSanitizer variants, and a lint job). On Windows, Debug and Release run as
-separate jobs (`windows-msvc`, `windows-msvc-release`):
+`.github/workflows/dvv-ci.yml` is the reusable workflow (Windows MSVC, Linux Clang and macOS Apple Clang
+builds with AddressSanitizer variants, Linux also ThreadSanitizer, and a lint job). On Windows, Debug
+and Release run as separate jobs (`windows-msvc`, `windows-msvc-release`):
 
 ```yaml
 concurrency:                      # newer PR pushes cancel older runs; a running main run finishes
@@ -221,7 +231,7 @@ concurrency:                      # newer PR pushes cancel older runs; a running
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   ci:
-    uses: <owner>/dvv-build/.github/workflows/dvv-ci.yml@v0.1.1   # = the dvv-build line
+    uses: <owner>/dvv-build/.github/workflows/dvv-ci.yml@v0.2.0   # = the dvv-build line
     with:
       repo: dvv-gpu
 ```
@@ -293,6 +303,12 @@ the `ninja-clang` tree with the test presets `ninja-clang-sanity` and `ninja-cla
 `VK_DRIVER_FILES` defaults to the lavapipe ICD. The `display` tests run only with `--gui` and an X
 display in `DISPLAY` (WSLg under WSL 2, or `xvfb-run -a -s "-screen 0 1920x1080x24"` as in CI). Logs
 go to `<root>/_build/sanity-linux/`.
+
+On macOS it is the same script and switches with the `ninja-macos` tree, the test presets
+`ninja-macos-sanity` and `ninja-macos-small`, the `appleclang` prefix and the prefix's KosmicKrisp
+ICD as the default `VK_DRIVER_FILES`; `--gui` needs a desktop session instead of `DISPLAY`, and the
+logs go to `<root>/_build/sanity-macos/`. The T2 workflows on macOS are `ninja-macos` and
+`ninja-macos-asan`.
 
 ## Checks
 

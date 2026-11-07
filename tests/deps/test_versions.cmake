@@ -16,6 +16,122 @@ if(DEFINED PLATFORM)
     if(NOT count EQUAL unique_count)
         message(FATAL_ERROR "a name is declared twice for ${PLATFORM}: ${names}")
     endif()
+    # Every entry built here is pinned: a version, an https URL and a SHA256 of 64 hex digits.
+    foreach(name IN LISTS names)
+        foreach(key IN ITEMS VERSION URL SHA256)
+            get_property(${key} GLOBAL PROPERTY "DVV_THIRD_PARTY_${name}_${key}")
+        endforeach()
+        if(VERSION STREQUAL "" OR NOT URL MATCHES "^https://[^ ]+$" OR
+           NOT SHA256 MATCHES "^[0-9a-f]+$")
+            message(FATAL_ERROR "${name} for ${PLATFORM} is not pinned: version '${VERSION}', "
+                                "URL '${URL}', SHA256 '${SHA256}'")
+        endif()
+        string(LENGTH "${SHA256}" hash_length)
+        if(NOT hash_length EQUAL 64)
+            message(FATAL_ERROR "${name} for ${PLATFORM}: SHA256 '${SHA256}' is not 64 digits")
+        endif()
+    endforeach()
+    # macOS (spec U-MAC2, U-MAC10): the loader is built from source, KosmicKrisp and vulkaninfo come
+    # from the LunarG SDK.
+    if(PLATFORM STREQUAL "Darwin")
+        set(expected_names nlohmann_json doctest Vulkan-Headers VulkanMemoryAllocator vk-bootstrap
+                           slang Vulkan-Utility-Libraries SPIRV-Headers SPIRV-Tools
+                           Vulkan-ValidationLayers Vulkan-Loader kosmickrisp vulkaninfo wxWidgets
+                           custom_ffmpeg)
+        if(NOT names STREQUAL expected_names)
+            message(FATAL_ERROR "names for Darwin: '${names}', expected '${expected_names}'")
+        endif()
+        foreach(entry IN ITEMS "slang|PREBUILT|TRUE" "kosmickrisp|PREBUILT|TRUE"
+                               "vulkaninfo|PREBUILT|TRUE" "Vulkan-Loader|PREBUILT|FALSE"
+                               "wxWidgets|CONFIGS|Release")
+            string(REPLACE "|" ";" entry "${entry}")
+            list(GET entry 0 name)
+            list(GET entry 1 key)
+            list(GET entry 2 expected)
+            get_property(value GLOBAL PROPERTY "DVV_THIRD_PARTY_${name}_${key}")
+            if(NOT "${value}" STREQUAL "${expected}")
+                message(FATAL_ERROR "${name} ${key} for Darwin: '${value}', expected '${expected}'")
+            endif()
+        endforeach()
+        get_property(url GLOBAL PROPERTY DVV_THIRD_PARTY_slang_URL)
+        if(NOT url MATCHES "/slang-2026\\.20-macos-aarch64\\.tar\\.gz$")
+            message(FATAL_ERROR "slang for Darwin: ${url}")
+        endif()
+        get_property(args GLOBAL PROPERTY DVV_THIRD_PARTY_wxWidgets_CMAKE_ARGS)
+        foreach(arg IN ITEMS -DwxBUILD_TOOLKIT=osx_cocoa -DwxBUILD_SHARED=OFF -DwxUSE_ZLIB=builtin
+                             -DwxUSE_LIBPNG=builtin)
+            if(NOT arg IN_LIST args)
+                message(FATAL_ERROR "wxWidgets for Darwin lacks ${arg}: ${args}")
+            endif()
+        endforeach()
+        if(args MATCHES "MSVC|STATIC_RUNTIME")
+            message(FATAL_ERROR "wxWidgets for Darwin has an MSVC-only option: ${args}")
+        endif()
+        # The loader searches the system's /etc, never the build machine's prefix.
+        get_property(args GLOBAL PROPERTY DVV_THIRD_PARTY_Vulkan-Loader_CMAKE_ARGS)
+        if(NOT "-DSYSCONFDIR=/etc" IN_LIST args)
+            message(FATAL_ERROR "Vulkan-Loader for Darwin lacks -DSYSCONFDIR=/etc: ${args}")
+        endif()
+        foreach(name IN ITEMS kosmickrisp vulkaninfo)
+            get_property(${name}_url GLOBAL PROPERTY "DVV_THIRD_PARTY_${name}_URL")
+            get_property(${name}_sha256 GLOBAL PROPERTY "DVV_THIRD_PARTY_${name}_SHA256")
+        endforeach()
+        if(NOT kosmickrisp_url STREQUAL vulkaninfo_url OR
+           NOT kosmickrisp_sha256 STREQUAL vulkaninfo_sha256)
+            message(FATAL_ERROR "kosmickrisp and vulkaninfo come from different SDK archives")
+        endif()
+        get_property(url GLOBAL PROPERTY DVV_THIRD_PARTY_custom_ffmpeg_URL)
+        get_property(version GLOBAL PROPERTY DVV_THIRD_PARTY_custom_ffmpeg_VERSION)
+        if(NOT version STREQUAL "1.0.1" OR
+           NOT url MATCHES "/v1\\.0\\.1/custom_ffmpeg-1\\.0\\.1-macos-arm64-shared-lgpl\\.tar\\.xz$")
+            message(FATAL_ERROR "custom_ffmpeg for Darwin: ${version} ${url}")
+        endif()
+        # The SDK carries no licence text of KosmicKrisp (Mesa) or vulkaninfo (Vulkan-Tools). MIT
+        # needs the copyright notices too: KosmicKrisp's are collected from the Mesa sources.
+        foreach(entry IN ITEMS "kosmickrisp|mesa/licenses/MIT,mesa/COPYRIGHTS.txt"
+                               "vulkaninfo|vulkan-tools/LICENSE.txt")
+            string(REPLACE "|" ";" entry "${entry}")
+            list(GET entry 0 name)
+            list(GET entry 1 expected)
+            string(REPLACE "," ";" expected "${expected}")
+            get_property(supplements GLOBAL PROPERTY "DVV_THIRD_PARTY_${name}_SUPPLEMENTS")
+            set(supplied "")
+            foreach(supplement IN LISTS supplements)
+                string(REPLACE "|" ";" parts "${supplement}")
+                list(GET parts 2 shown)
+                list(APPEND supplied "${shown}")
+            endforeach()
+            if(NOT supplied STREQUAL expected)
+                message(FATAL_ERROR "${name} licence supplements: '${supplied}', expected "
+                                    "'${expected}'")
+            endif()
+        endforeach()
+        # KosmicKrisp's expression lists everything compiled into the driver: Mesa (MIT), Berkeley
+        # SoftFloat, xxHash, the X11-style clause of util/hash_table.c and set.c, and BLAKE3.
+        get_property(spdx GLOBAL PROPERTY DVV_THIRD_PARTY_kosmickrisp_SPDX)
+        set(expected_spdx "MIT AND BSD-3-Clause AND BSD-2-Clause AND X11 AND \
+(CC0-1.0 OR Apache-2.0 OR Apache-2.0 WITH LLVM-exception)")
+        if(NOT spdx STREQUAL expected_spdx)
+            message(FATAL_ERROR "kosmickrisp SPDX: '${spdx}', expected '${expected_spdx}'")
+        endif()
+        # The collected notices name the driver's own holders, the shared Mesa code's and the
+        # non-MIT parts compiled into the driver, with their licence texts.
+        get_property(supplements GLOBAL PROPERTY DVV_THIRD_PARTY_kosmickrisp_SUPPLEMENTS)
+        list(GET supplements 1 supplement)
+        string(REPLACE "|" ";" parts "${supplement}")
+        list(GET parts 0 file)
+        file(READ "${file}" text)
+        foreach(expected IN ITEMS "\nCopyright 2025 LunarG, Inc\\.\n" "\nCopyright 2025 Google LLC\n"
+                                  "\nCopyright © 2015 Intel Corporation\n"
+                                  "\nCopyright 2008 VMware, Inc\\.\n"
+                                  "The Regents of the\n \\* University of California"
+                                  "Copyright \\(C\\) 2012-2023 Yann Collet"
+                                  "BSD 2-Clause License" "BLAKE3" "not be used in advertising")
+            if(NOT text MATCHES "${expected}")
+                message(FATAL_ERROR "mesa/COPYRIGHTS.txt lacks '${expected}'")
+            endif()
+        endforeach()
+    endif()
     # The entries whose code ships in a rawreel package (M4 design D19); custom_ffmpeg only when
     # bundled (user decision U4).
     set(shipped "")
@@ -26,6 +142,9 @@ if(DEFINED PLATFORM)
         endif()
     endforeach()
     set(expected_shipped Vulkan-Headers VulkanMemoryAllocator nlohmann_json vk-bootstrap wxWidgets)
+    if(PLATFORM STREQUAL "Darwin")
+        list(APPEND expected_shipped Vulkan-Loader kosmickrisp)
+    endif()
     if(BUNDLE)
         list(APPEND expected_shipped custom_ffmpeg)
     endif()
@@ -49,8 +168,12 @@ if(DEFINED PLATFORM)
         list(GET parts 2 shown)
         list(APPEND supplied "${shown}")
     endforeach()
+    # libvpl is in the Windows and Linux builds only (custom_ffmpeg's LICENSES.md).
     set(expected_supplied svtav1/third_party/fastfeat/LICENSE
-                          svtav1/third_party/safestringlib/LICENSE libvpl/third-party-programs.txt)
+                          svtav1/third_party/safestringlib/LICENSE)
+    if(NOT PLATFORM STREQUAL "Darwin")
+        list(APPEND expected_supplied libvpl/third-party-programs.txt)
+    endif()
     if(NOT supplied STREQUAL expected_supplied)
         message(FATAL_ERROR "custom_ffmpeg licence supplements for ${PLATFORM}: '${supplied}', "
                             "expected '${expected_supplied}'")
@@ -61,6 +184,9 @@ if(DEFINED PLATFORM)
     return()
 endif()
 
+if(NOT DVV_THIRD_PARTY_PLATFORMS STREQUAL "Windows;Linux;Darwin")
+    message(FATAL_ERROR "FAIL: DVV_THIRD_PARTY_PLATFORMS is '${DVV_THIRD_PARTY_PLATFORMS}'")
+endif()
 foreach(platform IN LISTS DVV_THIRD_PARTY_PLATFORMS)
     foreach(bundle IN ITEMS ON OFF)
         execute_process(COMMAND "${CMAKE_COMMAND}" "-DPLATFORM=${platform}" "-DBUNDLE=${bundle}"

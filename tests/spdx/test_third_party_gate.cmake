@@ -55,6 +55,9 @@ gate("NCSA" tool 0 "accepted")
 gate("CC-BY-4.0" tool 0 "accepted")
 gate("NCSA" runtime 1 "rejected: not allowed for runtime linkage: NCSA")
 gate("MIT AND CC-BY-4.0" static 1 "rejected: not allowed for static linkage: CC-BY-4.0")
+# KosmicKrisp: an AND list with a parenthesised OR choice that holds a WITH pair.
+gate("MIT AND BSD-3-Clause AND BSD-2-Clause AND X11 AND \
+(CC0-1.0 OR Apache-2.0 OR Apache-2.0 WITH LLVM-exception)" runtime 0 "accepted")
 
 # The gate judges a declaration that is not built on this platform, too.
 set(code "set(CMAKE_SYSTEM_NAME Linux)")
@@ -65,9 +68,28 @@ expect("${code}" 1 "Licence gate: windows_only 1.0 \\(GPL-3.0-only\\) rejected")
 string(CONCAT code "set(CMAKE_SYSTEM_NAME Windows)|dvv_third_party(probe VERSION 1.0"
                    " URL https://example.com/p.tgz SHA256 ${hash} SPDX MIT LINKAGE static)")
 expect("${code}" 1 "dvv_third_party\\(probe\\): LICENSE_FILES is required")
+# ONLY_ON names one of the three platforms; an unknown one is rejected.
 set(code "set(CMAKE_SYSTEM_NAME Windows)")
 decl(code probe MIT static ONLY_ON Darwin)
-expect("${code}" 1 "ONLY_ON must be one of Windows")
+expect("${code}" 0 "accepted")
+set(code "set(CMAKE_SYSTEM_NAME Darwin)")
+decl(code mac_only MIT static ONLY_ON Darwin)
+string(APPEND code [[|get_property(names GLOBAL PROPERTY DVV_THIRD_PARTY_NAMES)]]
+                   [[|message(STATUS "names=<${names}>")]])
+expect("${code}" 0 "names=<mac_only>")
+set(code "set(CMAKE_SYSTEM_NAME Linux)")
+decl(code mac_only MIT static ONLY_ON Darwin)
+string(APPEND code [[|get_property(names GLOBAL PROPERTY DVV_THIRD_PARTY_NAMES)]]
+                   [[|message(STATUS "names=<${names}>")]])
+expect("${code}" 0 "names=<>")
+set(code "set(CMAKE_SYSTEM_NAME Windows)")
+decl(code probe MIT static ONLY_ON FreeBSD)
+expect("${code}" 1 "ONLY_ON must be one of Windows.Linux.Darwin")
+# A Darwin-only dependency does not serve a dependant built everywhere.
+set(code "set(CMAKE_SYSTEM_NAME Darwin)")
+decl(code mac_only MIT static ONLY_ON Darwin)
+decl(code user MIT static DEPENDS mac_only)
+expect("${code}" 1 "dvv_third_party\\(user\\): DEPENDS mac_only is not declared before it for Windows")
 set(code "set(CMAKE_SYSTEM_NAME Windows)")
 decl(code probe MIT tool PREBUILT CMAKE_ARGS -DX=1)
 expect("${code}" 1 "PREBUILT takes no CMAKE_ARGS")
@@ -113,6 +135,7 @@ set(code "set(CMAKE_SYSTEM_NAME Linux)")
 decl(code headers MIT static)
 decl(code tool MIT tool ONLY_ON Windows PREBUILT)
 decl(code tool MIT tool ONLY_ON Linux PREBUILT POST_INSTALL test_third_party_gate.cmake)
+decl(code tool MIT tool ONLY_ON Darwin PREBUILT)
 decl(code user MIT static DEPENDS headers tool CONFIGS Debug Release
      CMAKE_ARGS -DA=1 -DB=<INSTALL_DIR>)
 string(APPEND code [[|get_property(names GLOBAL PROPERTY DVV_THIRD_PARTY_NAMES)]]

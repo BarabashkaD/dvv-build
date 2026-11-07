@@ -50,6 +50,30 @@
       "displayName": "Linux, Clang 19, ThreadSanitizer",
       "inherits": "ninja-clang",
       "cacheVariables": { "DVV_SANITIZE": "thread" }
+    },
+    {
+      "name": "ninja-macos",
+      "displayName": "macOS, Apple Silicon, AppleClang 21",
+      "inherits": "dvv-base-settings",
+      "generator": "Ninja Multi-Config",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Darwin" },
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "/usr/bin/clang",
+        "CMAKE_CXX_COMPILER": "/usr/bin/clang++",
+        "CMAKE_OBJC_COMPILER": "/usr/bin/clang",
+        "CMAKE_OBJCXX_COMPILER": "/usr/bin/clang++",
+        "CMAKE_PREFIX_PATH": "${sourceDir}/libs/_third_party/appleclang",
+        "CMAKE_BUILD_RPATH": "${sourceDir}/libs/_third_party/appleclang/lib",
+        "CMAKE_OSX_DEPLOYMENT_TARGET": "27.0",
+        "CMAKE_OSX_ARCHITECTURES": "arm64",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
+      "name": "ninja-macos-asan",
+      "displayName": "macOS, AppleClang 21, AddressSanitizer + UndefinedBehaviorSanitizer",
+      "inherits": "ninja-macos",
+      "cacheVariables": { "DVV_SANITIZE": "address;undefined" }
     }
   ],
   "buildPresets": [
@@ -59,7 +83,10 @@
     { "name": "ninja-clang", "configurePreset": "ninja-clang", "configuration": "Debug" },
     { "name": "ninja-clang-release", "configurePreset": "ninja-clang", "configuration": "Release" },
     { "name": "ninja-clang-asan", "configurePreset": "ninja-clang-asan", "configuration": "Debug" },
-    { "name": "ninja-clang-tsan", "configurePreset": "ninja-clang-tsan", "configuration": "Debug" }
+    { "name": "ninja-clang-tsan", "configurePreset": "ninja-clang-tsan", "configuration": "Debug" },
+    { "name": "ninja-macos", "configurePreset": "ninja-macos", "configuration": "Debug" },
+    { "name": "ninja-macos-release", "configurePreset": "ninja-macos", "configuration": "Release" },
+    { "name": "ninja-macos-asan", "configurePreset": "ninja-macos-asan", "configuration": "Debug" }
   ],
   "testPresets": [
     {
@@ -99,7 +126,22 @@
     },
     { "name": "ninja-clang-release", "inherits": "dvv-test-settings", "configurePreset": "ninja-clang", "configuration": "Release" },
     { "name": "ninja-clang-asan", "inherits": "dvv-test-settings", "configurePreset": "ninja-clang-asan", "configuration": "Debug" },
-    { "name": "ninja-clang-tsan", "inherits": "dvv-test-settings", "configurePreset": "ninja-clang-tsan", "configuration": "Debug" }
+    { "name": "ninja-clang-tsan", "inherits": "dvv-test-settings", "configurePreset": "ninja-clang-tsan", "configuration": "Debug" },
+    { "name": "ninja-macos", "inherits": "dvv-test-settings", "configurePreset": "ninja-macos", "configuration": "Debug" },
+    {
+      "name": "ninja-macos-sanity",
+      "displayName": "Sanity cycle: the fast tests labelled sanity",
+      "inherits": "ninja-macos",
+      "filter": { "include": { "label": "sanity" } }
+    },
+    {
+      "name": "ninja-macos-small",
+      "displayName": "Small cycle: every test except those labelled package",
+      "inherits": "ninja-macos",
+      "filter": { "exclude": { "label": "package" } }
+    },
+    { "name": "ninja-macos-release", "inherits": "dvv-test-settings", "configurePreset": "ninja-macos", "configuration": "Release" },
+    { "name": "ninja-macos-asan", "inherits": "dvv-test-settings", "configurePreset": "ninja-macos-asan", "configuration": "Debug" }
   ],
   "workflowPresets": [
     {
@@ -144,6 +186,24 @@
         { "type": "configure", "name": "ninja-clang-tsan" },
         { "type": "build", "name": "ninja-clang-tsan" },
         { "type": "test", "name": "ninja-clang-tsan" }
+      ]
+    },
+    {
+      "name": "ninja-macos",
+      "steps": [
+        { "type": "configure", "name": "ninja-macos" },
+        { "type": "build", "name": "ninja-macos" },
+        { "type": "test", "name": "ninja-macos" },
+        { "type": "build", "name": "ninja-macos-release" },
+        { "type": "test", "name": "ninja-macos-release" }
+      ]
+    },
+    {
+      "name": "ninja-macos-asan",
+      "steps": [
+        { "type": "configure", "name": "ninja-macos-asan" },
+        { "type": "build", "name": "ninja-macos-asan" },
+        { "type": "test", "name": "ninja-macos-asan" }
       ]
     }
   ]

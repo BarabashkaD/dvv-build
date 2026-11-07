@@ -23,7 +23,7 @@ set(DVV_LAME_SOURCE_URL "@lame_URL@")
 set(DVV_LAME_SOURCE_SHA256 "@lame_SHA256@")
 
 # The archive's top folder: the one with include/libavutil/avutil.h (M4 Task 0 recorded the layout:
-# <prefix>/custom_ffmpeg/<os>-x64/shared/lgpl).
+# <prefix>/custom_ffmpeg/<os>-<arch>/shared/lgpl: windows-x64, linux-x64, macos-arm64).
 cmake_path(SET _dvv_ffmpeg_extracted NORMALIZE "${CMAKE_CURRENT_LIST_DIR}/../../../custom_ffmpeg")
 file(GLOB_RECURSE _dvv_ffmpeg_headers LIST_DIRECTORIES false "${_dvv_ffmpeg_extracted}/avutil.h")
 list(FILTER _dvv_ffmpeg_headers INCLUDE REGEX "/include/libavutil/avutil\\.h$")
@@ -50,7 +50,8 @@ if(WIN32)
     set(DVV_FFMPEG_COMMAND "${DVV_FFMPEG_PROGRAM}")
     set(DVV_FFPROBE_COMMAND "${DVV_FFPROBE_PROGRAM}")
 else()
-    # The programs find their libraries without a RUNPATH, too.
+    # The programs find their libraries without a RUNPATH, too (the macOS ones by their rpath
+    # @executable_path/../lib).
     set(DVV_FFMPEG_COMMAND "${CMAKE_COMMAND}" -E env "LD_LIBRARY_PATH=${DVV_FFMPEG_RUNTIME_DIR}"
                            "${DVV_FFMPEG_PROGRAM}")
     set(DVV_FFPROBE_COMMAND "${CMAKE_COMMAND}" -E env "LD_LIBRARY_PATH=${DVV_FFMPEG_RUNTIME_DIR}"
@@ -64,6 +65,14 @@ foreach(_dvv_library IN ITEMS avutil avcodec avformat avfilter swscale swresampl
     if(WIN32)
         file(GLOB _dvv_files LIST_DIRECTORIES false "${DVV_FFMPEG_RUNTIME_DIR}/${_dvv_library}-*.dll")
         set(_dvv_loaded ${_dvv_files})
+    elseif(APPLE)
+        # lib<name>.<major>.<minor>.<micro>.dylib and its links lib<name>.<major>.dylib (loaded)
+        # and lib<name>.dylib.
+        file(GLOB _dvv_files LIST_DIRECTORIES false
+             "${DVV_FFMPEG_RUNTIME_DIR}/lib${_dvv_library}.dylib"
+             "${DVV_FFMPEG_RUNTIME_DIR}/lib${_dvv_library}.[0-9]*.dylib")
+        set(_dvv_loaded ${_dvv_files})
+        list(FILTER _dvv_loaded INCLUDE REGEX "/lib${_dvv_library}\\.[0-9]+\\.dylib$")
     else()
         file(GLOB _dvv_files LIST_DIRECTORIES false "${DVV_FFMPEG_RUNTIME_DIR}/lib${_dvv_library}.so*")
         set(_dvv_loaded ${_dvv_files})
