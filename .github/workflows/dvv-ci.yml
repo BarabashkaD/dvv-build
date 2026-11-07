@@ -90,6 +90,8 @@ jobs:
       fail-fast: false
       # Windows: one job per configuration (`preset` configures, `config` names the build and test
       # presets), so Debug and Release build and test in parallel; Linux runs the workflow preset.
+      # macOS runs the configure, build and test steps of its preset itself (see "Build and test
+      # (macOS)"); the ninja-macos entry also builds and tests Release, as the workflow preset does.
       matrix:
         include:
           - { name: windows-msvc, os: windows-2025, toolchain: msvc, preset: vs2026, config: vs2026 }
@@ -98,6 +100,8 @@ jobs:
           - { name: linux-clang, os: ubuntu-24.04, toolchain: clang, preset: ninja-clang }
           - { name: linux-clang-asan, os: ubuntu-24.04, toolchain: clang, preset: ninja-clang-asan }
           - { name: linux-clang-tsan, os: ubuntu-24.04, toolchain: clang, preset: ninja-clang-tsan }
+          - { name: macos-appleclang, os: xcode-27, toolchain: appleclang, preset: ninja-macos }
+          - { name: macos-appleclang-asan, os: xcode-27, toolchain: appleclang, preset: ninja-macos-asan }
     steps:
       - uses: actions/checkout@v5
         with:
@@ -158,6 +162,11 @@ jobs:
       - name: Bootstrap (Linux)
         if: runner.os == 'Linux'
         run: ./${{ env.DVV_BUILD }}/bootstrap.sh --toolchain ${{ matrix.toolchain }}
+      - name: Bootstrap (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install ninja
+          ./${{ env.DVV_BUILD }}/bootstrap.sh --toolchain ${{ matrix.toolchain }}
       # Saved right after bootstrap, so a failing build or test does not throw the third-party build
       # away. When parallel jobs miss together, the first save wins and the others only warn.
       - name: Save third-party
@@ -166,6 +175,26 @@ jobs:
         with:
           path: ${{ env.DVV_ROOT }}/_third_party/${{ matrix.toolchain }}
           key: ${{ steps.third-party.outputs.cache-primary-key }}
+      # The runner's paravirtual Metal device may not run KosmicKrisp (spec C10), so this step never
+      # fails the job: it prints the device check and records in `device` whether a Vulkan 1.4 device
+      # and a desktop session (WindowServer) exist. The next step runs the GPU tests as required only
+      # then and leaves out the display tests otherwise; without a device the GPU tests skip (77).
+      - name: Check the Vulkan device (macOS)
+        id: vulkan
+        if: runner.os == 'macOS'
+        continue-on-error: true
+        run: |
+          device=0
+          if cmake -P "$DVV_BUILD/tools/check-vulkan-device.cmake"; then
+            if pgrep -x WindowServer > /dev/null; then
+              device=1
+            else
+              echo "::notice::A Vulkan device was found but there is no desktop session; the display tests are left out"
+            fi
+          else
+            echo "::notice::No usable Vulkan device on this runner; the GPU tests skip and the display tests are left out"
+          fi
+          echo "device=$device" >> "$GITHUB_OUTPUT"
       # Windows runners have no GPU: the GPU, display and GUI tests exit with 77 and CTest reports
       # them as skipped. The three steps are the workflow preset's steps for one configuration.
       - name: Configure (Windows)
@@ -199,6 +228,35 @@ jobs:
           NO_AT_BRIDGE: "1"
           DVV_TEST_DEPENDENCIES: ${{ inputs.test-dependencies && 'ON' || '' }}
         run: xvfb-run -a -s "-screen 0 1920x1080x24" cmake --workflow --preset ${{ matrix.preset }}
+      # macOS: the workflow preset's steps for this entry, with CTest's `-LE display` added unless the
+      # device check found a device and a desktop session. With a device the GPU tests are required to
+      # run (as on Linux, on KosmicKrisp in the prefix) with synchronization validation; ninja-macos
+      # builds and tests Release too. FFmpeg (custom_ffmpeg in the prefix) is required as on Windows and
+      # Linux. NO_AT_BRIDGE is a GTK setting and not needed here.
+      - name: Build and test (macOS)
+        if: runner.os == 'macOS'
+        working-directory: ${{ inputs.repo }}
+        env:
+          DEVICE: ${{ steps.vulkan.outputs.device }}
+          DVV_REQUIRE_FFMPEG: "1"
+          DVV_TEST_DEPENDENCIES: ${{ inputs.test-dependencies && 'ON' || '' }}
+          PRESET: ${{ matrix.preset }}
+          PREFIX: ${{ github.workspace }}/${{ env.DVV_ROOT }}/_third_party/${{ matrix.toolchain }}
+        run: |
+          tests=()
+          if [ "$DEVICE" = 1 ]; then
+            export DVV_REQUIRE_GPU=1 DVV_VK_VALIDATION=sync DVV_VK_VALIDATION_REQUIRED=1
+            export VK_DRIVER_FILES="$PREFIX/share/vulkan/icd.d/libkosmickrisp_icd.json"
+          else
+            tests=(-LE display)
+          fi
+          presets=("$PRESET")
+          if [ "$PRESET" = ninja-macos ]; then presets+=(ninja-macos-release); fi
+          cmake --preset "$PRESET"
+          for preset in "${presets[@]}"; do
+            cmake --build --preset "$preset"
+            ctest --preset "$preset" ${tests[@]+"${tests[@]}"}
+          done
 
   # Libraries and applications only: dvv-build compiles no sources of its own, and its ci.yml runs
   # the privacy lint in the tools job.

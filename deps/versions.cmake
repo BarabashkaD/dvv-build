@@ -88,6 +88,18 @@ AND BSL-1.0 AND Unlicense AND GPL-3.0-or-later WITH Bison-exception-2.2 AND NCSA
     ONLY_ON Linux
     PREBUILT)
 
+# The macOS archive for Apple Silicon includes slang-llvm, like the Windows one.
+dvv_third_party(slang
+    VERSION 2026.20
+    URL https://github.com/shader-slang/slang/releases/download/v2026.20/slang-2026.20-macos-aarch64.tar.gz
+    SHA256 07fa8833fdbb343c3674c84fdd885910f495f3daaaa0c732b32980151e8b58c4
+    SPDX "Apache-2.0 WITH LLVM-exception AND Apache-2.0 AND MIT AND BSD-2-Clause AND BSD-3-Clause \
+AND BSL-1.0 AND Unlicense AND GPL-3.0-or-later WITH Bison-exception-2.2 AND NCSA AND CC-BY-4.0"
+    LINKAGE tool
+    LICENSE_FILES LICENSE LICENSES/*.txt third-party-notices/*
+    ONLY_ON Darwin
+    PREBUILT)
+
 # Vulkan validation layer (spec §5, §12) and what it is built from: loaded by the Vulkan loader in
 # Debug builds and tests only, never shipped. The versions are the set Vulkan-ValidationLayers
 # 1.4.365 pins in scripts/known_good.json. Vulkan-Utility-Libraries, SPIRV-Headers and SPIRV-Tools
@@ -144,6 +156,85 @@ dvv_third_party(Vulkan-ValidationLayers
                -DBUILD_WSI_XCB_SUPPORT=ON -DBUILD_WSI_XLIB_SUPPORT=ON
                -DBUILD_WSI_XLIB_XRANDR_SUPPORT=ON -DBUILD_WSI_WAYLAND_SUPPORT=ON
     POST_INSTALL post-install/Vulkan-ValidationLayers.cmake)
+
+# macOS (spec U-MAC2): the Vulkan loader is built from source and shipped in the app bundle (on
+# Windows and Linux the system's loader is used). Its install name is @rpath/libvulkan.1.dylib.
+# loader/cJSON.c is MIT (the notice is in cJSON.h); the other compiled files are Apache-2.0
+# (REUSE.toml). It also installs loader/vulkan.framework, which nothing uses. SYSCONFDIR=/etc: the
+# loader would otherwise search <prefix>/etc of the build machine (CMAKE_INSTALL_FULL_SYSCONFDIR).
+dvv_third_party(Vulkan-Loader
+    VERSION 1.4.365
+    URL https://github.com/KhronosGroup/Vulkan-Loader/archive/refs/tags/v1.4.365.tar.gz
+    SHA256 df0358f57c1936e4abd262a7327ba1f80ffb424dbbdcbcb01bb9288511f31eef
+    SPDX "Apache-2.0 AND MIT"
+    LINKAGE runtime
+    SHIPPED
+    LICENSE_FILES LICENSE.txt loader/cJSON.h
+    ONLY_ON Darwin
+    DEPENDS Vulkan-Headers
+    CMAKE_ARGS -DBUILD_TESTS=OFF -DUPDATE_DEPS=OFF -DBUILD_WERROR=OFF -DSYSCONFDIR=/etc)
+
+# KosmicKrisp (spec U-MAC2), Mesa's Vulkan driver on Metal, from the LunarG Vulkan SDK for macOS
+# (the zip holds the SDK's installer application). The post-install step runs the installer into
+# the build tree and copies the driver lib/libvulkan_kosmickrisp.dylib, its manifest
+# share/vulkan/icd.d/libkosmickrisp_icd.json (library_path ../../../lib/<driver>) and
+# bin/vulkaninfo; the SDK's MoltenVK is never installed. The SDK has no licence text of its own
+# components; Licenses/LICENSE.txt (LunarG's statement) is copied from the installed SDK; the MIT
+# text and the copyright notices from Mesa (the commit VERSIONS.txt names) are supplements below.
+# The expression lists everything compiled into the driver: Mesa (MIT), Berkeley SoftFloat
+# (BSD-3-Clause), xxHash (BSD-2-Clause), the non-endorsement clause of Mesa's util/hash_table.c
+# and set.c (X11) and BLAKE3 (its upstream choice of licences).
+dvv_third_party(kosmickrisp
+    VERSION 1.4.363.1
+    URL https://sdk.lunarg.com/sdk/download/1.4.363.1/mac/vulkan_sdk.zip
+    SHA256 a65c707cf0a32bf8c2ca6b9af1985b7af61dbadfc19b352dae51a323f3a547a6
+    SPDX "MIT AND BSD-3-Clause AND BSD-2-Clause AND X11 AND \
+(CC0-1.0 OR Apache-2.0 OR Apache-2.0 WITH LLVM-exception)"
+    LINKAGE runtime
+    SHIPPED
+    LICENSE_FILES Licenses/LICENSE.txt
+    ONLY_ON Darwin
+    PREBUILT
+    POST_INSTALL post-install/kosmickrisp.cmake)
+
+# vulkaninfo from the same SDK (Vulkan-Tools), a test tool for tools/check-vulkan-device.cmake,
+# never shipped. It shares kosmickrisp's archive, whose post-install step installs it; its licence
+# text from Vulkan-Tools (the commit VERSIONS.txt names) is a supplement below. It opens the loader
+# as libvulkan.dylib by its bare name, so it runs with DYLD_LIBRARY_PATH=<prefix>/lib.
+dvv_third_party(vulkaninfo
+    VERSION 1.4.363.1
+    URL https://sdk.lunarg.com/sdk/download/1.4.363.1/mac/vulkan_sdk.zip
+    SHA256 a65c707cf0a32bf8c2ca6b9af1985b7af61dbadfc19b352dae51a323f3a547a6
+    SPDX Apache-2.0
+    LINKAGE tool
+    LICENSE_FILES Licenses/LICENSE.txt
+    ONLY_ON Darwin
+    DEPENDS kosmickrisp
+    PREBUILT)
+
+dvv_licence_supplement(kosmickrisp
+    FILE mesa/licenses/MIT
+    COMPONENT Mesa
+    VERSION 269a955c89
+    URL https://gitlab.freedesktop.org/aitor/mesa/-/raw/269a955c898df283fc36f4827643769068cf3d29/licenses/MIT
+    SHA256 323c587d0ccf10e376f8bf9a7f31fb4ca6078105194b42e0b1e0ee2bc9bde71f)
+# MIT needs the copyright notices as well: collected from the sources at that commit (the file
+# says how), with the unchanged notices of the files under other terms compiled into the driver.
+# COPYRIGHTS.txt is derived from the sources at the pinned Mesa commit and must be regenerated
+# (procedure in its header: grep of the copyright lines, nm of the shipped dylib for Part 2)
+# whenever the KosmicKrisp pin changes.
+dvv_licence_supplement(kosmickrisp
+    FILE mesa/COPYRIGHTS.txt
+    COMPONENT Mesa
+    VERSION 269a955c89
+    URL https://gitlab.freedesktop.org/aitor/mesa/-/tree/269a955c898df283fc36f4827643769068cf3d29
+    SHA256 8da71d48d56554e78cf6053b35045d3febe7dec049a4c60fb046bbfe66e56e5e)
+dvv_licence_supplement(vulkaninfo
+    FILE vulkan-tools/LICENSE.txt
+    COMPONENT Vulkan-Tools
+    VERSION 6fe2055cf2
+    URL https://raw.githubusercontent.com/KhronosGroup/Vulkan-Tools/6fe2055cf2fa921d52a4c6a31528cfc279a6977f/LICENSE.txt
+    SHA256 cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30)
 
 # wxWidgets (spec §2, §10.2), static. MSVC builds Debug and Release (Debug builds of rawreel link the
 # /MDd libraries); Debug objects carry their debug information (/Z7, no separate PDB, so a Debug
@@ -207,6 +298,29 @@ AND Zlib"
                -DwxUSE_LIBLZMA=OFF -DwxUSE_WEBREQUEST_CURL=OFF
                -DwxUSE_XTEST=OFF -DwxUSE_APPINDICATOR=OFF -DwxUSE_DETECT_SM=OFF -DwxUSE_WAYLAND=OFF)
 
+# macOS: Release only (as Linux: the Ninja superbuild builds one configuration), Cocoa, the bundled
+# zlib and libpng (as Windows; nothing from Homebrew), the Windows options without the MSVC ones.
+dvv_third_party(wxWidgets
+    VERSION 3.3.4
+    URL https://github.com/wxWidgets/wxWidgets/releases/download/v3.3.4/wxWidgets-3.3.4.tar.bz2
+    SHA256 815c16cafa4fcbfcf25c5c0a3418309c62257b8a3b6f91d85a1367a134f98c98
+    SPDX "LGPL-2.0-or-later WITH WxWindows-exception-3.1 AND IJG AND X11 AND Unicode-DFS-2016 \
+AND Zlib AND libpng-2.0"
+    LINKAGE static
+    SHIPPED
+    LICENSE_FILES docs/licence.txt docs/lgpl.txt src/jpeg/README src/common/xpmdecod.cpp
+                  misc/languages/data/unicode/unicode-license.txt 3rdparty/nanosvg/LICENSE.txt
+                  src/zlib/LICENSE src/png/LICENSE
+    ONLY_ON Darwin
+    CMAKE_ARGS -DwxBUILD_TOOLKIT=osx_cocoa -DwxBUILD_SHARED=OFF
+               -DwxBUILD_SAMPLES=OFF -DwxBUILD_TESTS=OFF -DwxBUILD_DEMOS=OFF -DwxBUILD_INSTALL=ON
+               -DwxBUILD_CXX_STANDARD=17
+               -DwxUSE_ZLIB=builtin -DwxUSE_LIBPNG=builtin -DwxUSE_LIBJPEG=OFF -DwxUSE_LIBTIFF=OFF
+               -DwxUSE_LIBWEBP=OFF -DwxUSE_LUNASVG=OFF -DwxUSE_NANOSVG=builtin -DwxUSE_REGEX=OFF
+               -DwxUSE_EXPAT=OFF -DwxUSE_XML=OFF -DwxUSE_XRC=OFF -DwxUSE_RICHTEXT=OFF
+               -DwxUSE_STC=OFF -DwxUSE_WEBVIEW=OFF -DwxUSE_MEDIACTRL=OFF -DwxUSE_OPENGL=OFF
+               -DwxUSE_WEBREQUEST=OFF -DwxUSE_SECRETSTORE=OFF -DwxUSE_APPLE_IEEE=OFF)
+
 # FFmpeg (spec §2, §13.2; M4 design D3, §9): the custom_ffmpeg "lgpl" shared release, loaded at run
 # time and never linked. dvv-components compiles against its headers (through dvv_ffmpeg_sdk,
 # written by deps/CMakeLists.txt); its six run-time libraries ship in the Windows package's ffmpeg/
@@ -251,12 +365,27 @@ AND BSD-3-Clause-Clear AND MIT AND Zlib"
     PREBUILT
     ${custom_ffmpeg_shipped})
 
+# macOS (spec U-MAC10): v1.0.1, whose shared libraries carry the rpath @loader_path (Windows and
+# Linux stay on v1.0.0). The archive has no libvpl, AMF or ffnvcodec.
+dvv_third_party(custom_ffmpeg
+    VERSION 1.0.1
+    URL https://github.com/BarabashkaD/custom_ffmpeg/releases/download/v1.0.1/custom_ffmpeg-1.0.1-macos-arm64-shared-lgpl.tar.xz
+    SHA256 a852d6c99da521992dc74c369c65af74a382679a982c54f06da9918d8e05a910
+    SPDX "LGPL-2.1-or-later AND LGPL-2.0-or-later AND BSD-3-Clause AND BSD-2-Clause \
+AND BSD-3-Clause-Clear AND MIT AND Zlib"
+    LINKAGE runtime
+    LICENSE_FILES macos-arm64/shared/lgpl/share/licenses/*/*
+    ONLY_ON Darwin
+    PREBUILT
+    ${custom_ffmpeg_shipped})
+
 # Licence texts that custom_ffmpeg's LICENSES.md names but its archives do not contain, taken
 # unchanged from the commits its build-info.txt names (SVT-AV1 4.2.0 @ 9292ec8e3 = tag v4.2.0,
 # libvpl 2.17 @ d77f9195c = tag v2.17.0). SVT-AV1's encoder library compiles in fastfeat
 # (BSD-3-Clause) and safestringlib (MIT). libvpl's third-party-programs.txt covers its googletest
 # and Open Model Zoo code, which are in its tests and examples, not in the dispatcher, so the SPDX
-# expression above does not change.
+# expression above does not change. libvpl is in the Windows and Linux builds only (LICENSES.md),
+# so its supplement is not attached on macOS. The macOS 1.0.1 build has the same SVT-AV1 commit.
 dvv_licence_supplement(custom_ffmpeg
     FILE svtav1/third_party/fastfeat/LICENSE
     COMPONENT SVT-AV1
@@ -274,7 +403,8 @@ dvv_licence_supplement(custom_ffmpeg
     COMPONENT libvpl
     VERSION 2.17.0
     URL https://raw.githubusercontent.com/intel/libvpl/d77f9195cf495b937631607333288fd917ae8939/third-party-programs.txt
-    SHA256 e3c92992b1df02b467ac086d7d3730f4c1fc2c2a1f2c520657c4c9f2085305a3)
+    SHA256 e3c92992b1df02b467ac086d7d3730f4c1fc2c2a1f2c520657c4c9f2085305a3
+    PLATFORMS Windows Linux)
 
 # LAME 3.100 source tarball (M4 design D27): LAME is inside custom_ffmpeg's libraries; the tarball is
 # pinned only for rawreel's third-party sources archive and is never downloaded by the superbuild,

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# The Linux sanity cycle (the counterpart of sanity.ps1): an incremental ninja-clang Debug build and
-# the tests labelled sanity, per repository.
+# The Linux and macOS sanity cycle (the counterpart of sanity.ps1): an incremental ninja-clang (macOS:
+# ninja-macos) Debug build and the tests labelled sanity, per repository.
 #
 # The repositories are dvv-build, the repositories of repos.txt cloned next to it (in that order) and
 # the app (the folder above a libs/ root whose .gitmodules holds libs/dvv-build, as in bootstrap.sh).
@@ -9,7 +9,10 @@
 # ctest --preset ninja-clang-sanity with the GPU settings (DVV_REQUIRE_GPU=1,
 # DVV_VK_VALIDATION=sync, DVV_VK_VALIDATION_REQUIRED=1 and the validation layer of
 # <root>/_third_party/clang). VK_DRIVER_FILES defaults to the lavapipe ICD when the caller has not
-# set it. dvv-build runs only its own dvv_build.* tests.
+# set it. On macOS the presets are ninja-macos and ninja-macos-sanity (-small), the prefix
+# <root>/_third_party/appleclang, the default VK_DRIVER_FILES the prefix's KosmicKrisp ICD, and the
+# build and test output goes to <root>/_build/sanity-macos. dvv-build runs only its own dvv_build.*
+# tests.
 # Prints one PASS or FAIL line per repository and exits with 1 when any repository fails. The build
 # and test output goes to <root>/_build/sanity-linux/<name>.log; a failure prints the log's last
 # lines. Everything is resolved from this script's location (<root> is the folder that holds
@@ -24,9 +27,11 @@ Usage: sanity.sh [--repo <name>[,<name>...]]... [--gui] [--small] [--downstream]
                 name (repeatable or comma-separated). Default: every one that is cloned.
   --gui         also runs the sanity tests labelled display; needs DISPLAY (an X server, e.g.
                 WSLg or Xvfb). Without it, or without DISPLAY, the display tests are left out.
+                On macOS it needs a logged-in desktop session instead of DISPLAY.
   --small       the small cycle (T1): ninja-clang-small (every test except those labelled
                 package) instead of ninja-clang-sanity in the selected repositories and in the
                 app; repositories added by --downstream between them keep ninja-clang-sanity.
+                On macOS the presets are ninja-macos-small and ninja-macos-sanity.
   --downstream  also checks every cloned repository after the first selected one in the sanity
                 order (repos.txt, then the app): the users of a changed library.
   --tests       a regular expression passed on as ctest -R. Needs exactly one repository given
@@ -40,6 +45,12 @@ EOF
 script_dir=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null && pwd)
 dvv_build=$(dirname "$script_dir")
 root=$(dirname "$dvv_build")
+
+if [[ $(uname -s) == Darwin ]]; then
+    preset=ninja-macos toolchain=appleclang platform=macos
+else
+    preset=ninja-clang toolchain=clang platform=linux
+fi
 
 trim() {
     local s=${1%$'\r'}
@@ -159,9 +170,9 @@ fi
 preset_of() {
     if { [[ -n $test_regex ]] && is_named "$1"; } ||
         { ((small)) && { is_named "$1" || [[ -n $app_name && $1 == "$app_name" ]]; }; }; then
-        printf 'ninja-clang-small'
+        printf '%s-small' "$preset"
     else
-        printf 'ninja-clang-sanity'
+        printf '%s-sanity' "$preset"
     fi
 }
 if ((small || downstream)) || [[ -n $test_regex ]]; then
@@ -175,17 +186,21 @@ if ((small || downstream)) || [[ -n $test_regex ]]; then
 fi
 
 export DVV_REQUIRE_GPU=1 DVV_VK_VALIDATION=sync DVV_VK_VALIDATION_REQUIRED=1
-export VK_ADD_LAYER_PATH="$root/_third_party/clang/share/vulkan/explicit_layer.d"
-lavapipe=/usr/share/vulkan/icd.d/lvp_icd.json
-if [[ -z ${VK_DRIVER_FILES+set} && -f $lavapipe ]]; then
-    export VK_DRIVER_FILES=$lavapipe
+export VK_ADD_LAYER_PATH="$root/_third_party/$toolchain/share/vulkan/explicit_layer.d"
+if [[ $platform == macos ]]; then
+    icd=$root/_third_party/appleclang/share/vulkan/icd.d/libkosmickrisp_icd.json
+else
+    icd=/usr/share/vulkan/icd.d/lvp_icd.json
+fi
+if [[ -z ${VK_DRIVER_FILES+set} && -f $icd ]]; then
+    export VK_DRIVER_FILES=$icd
 fi
 # Keeps the GTK accessibility bridge quiet in the display tests.
 export NO_AT_BRIDGE=${NO_AT_BRIDGE:-1}
 
 display_filter=(-LE display)
 if ((gui)); then
-    if [[ -n ${DISPLAY:-} ]]; then
+    if [[ $platform == macos || -n ${DISPLAY:-} ]]; then
         display_filter=()
     else
         echo "sanity: --gui given but DISPLAY is not set; the display tests are left out"
@@ -193,7 +208,7 @@ if ((gui)); then
 fi
 echo "sanity: VK_DRIVER_FILES=${VK_DRIVER_FILES:-<loader default>}, display tests: $( ((${#display_filter[@]})) && echo off || echo on)"
 
-log_dir=$root/_build/sanity-linux
+log_dir=$root/_build/sanity-$platform
 mkdir -p "$log_dir"
 
 # Runs a command in a repository with its output appended to the log; returns its exit code.
@@ -205,9 +220,16 @@ run_logged() {
 }
 
 # Seconds since boot: monotonic, unlike the wall clock, which WSL may step while a run is going.
+# macOS has no /proc/uptime: the boot time comes from kern.boottime ("{ sec = N, usec = M } ...").
 now() {
     local up _
-    read -r up _ </proc/uptime
+    if [[ $platform == macos ]]; then
+        local boot
+        boot=$(sysctl -n kern.boottime | sed -E 's/.*sec = ([0-9]+).*/\1/')
+        up=$(( $(date +%s) - boot ))
+    else
+        read -r up _ </proc/uptime
+    fi
     printf '%s' "$up"
 }
 seconds() { awk -v a="$1" -v b="$2" 'BEGIN { printf "%.1f", b - a }'; }
@@ -222,14 +244,14 @@ for name in "${selected[@]}"; do
     code=0
     build_start=$(now)
     # Every preset tree is <root>/_build/<folder name>/<preset> (the app's libs/_build too).
-    if [[ ! -f $root/_build/$name/ninja-clang/CMakeCache.txt ]]; then
+    if [[ ! -f $root/_build/$name/$preset/CMakeCache.txt ]]; then
         stage=configure
-        run_logged "$log" "$dir" cmake --preset ninja-clang
+        run_logged "$log" "$dir" cmake --preset "$preset"
         code=$?
         ((code == 0)) && stage=build
     fi
     if ((code == 0)); then
-        run_logged "$log" "$dir" cmake --build --preset ninja-clang
+        run_logged "$log" "$dir" cmake --build --preset "$preset"
         code=$?
     fi
     build_end=$(now)
@@ -254,7 +276,7 @@ for name in "${selected[@]}"; do
     else
         failed=$((failed + 1))
         printf 'FAIL %-18s %s failed (exit %d); %s; log: %s\n' "$name" "$stage" "$code" "$times" \
-            "_build/sanity-linux/$name.log"
+            "_build/sanity-$platform/$name.log"
         tail -n 25 "$log" | sed 's/^/    /'
     fi
 done

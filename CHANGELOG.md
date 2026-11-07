@@ -5,6 +5,47 @@ versions follow semantic versioning with the dvv rules: compatible = the same ma
 minimum version, also for 0.x; breaking changes only in a new major, after a deprecation. This file is
 the release notes (there are no GitHub Releases).
 
+## [0.2.0] - 2026-11-07
+
+macOS on Apple Silicon (macOS 27 or newer). The Windows and Linux builds, presets and notices are
+unchanged.
+
+### Added
+- Presets `ninja-macos` (Debug and Release configurations, `ninja-macos-release`) and
+  `ninja-macos-asan` in `cmake/DvvPresets.json` and `cmake/DvvAppPresets.json`, pinned to AppleClang
+  (`/usr/bin/clang` and `/usr/bin/clang++` for C, C++, Objective-C and Objective-C++), arm64,
+  deployment target 27.0; the test presets `ninja-macos-sanity` and `ninja-macos-small`, the macOS
+  twins of `ninja-clang-sanity` and `ninja-clang-small`. There is no ThreadSanitizer preset on macOS.
+- `DvvCompilerOptions.cmake` accepts Apple Clang with libc++ on macOS and rejects any other compiler
+  or standard library there.
+- The macOS third-party prefix `<root>/_third_party/appleclang` (`bootstrap.sh --toolchain
+  appleclang`, the default on macOS): Slang, wxWidgets on the native macOS port (wxOSX),
+  custom_ffmpeg 1.0.1 (`macos-arm64-shared-lgpl`, rpath `@loader_path`; Windows and Linux stay on
+  1.0.0), the Vulkan loader built from source, KosmicKrisp (Mesa's Vulkan driver on Metal) from the
+  LunarG SDK and `vulkaninfo`, with their licence texts and notices.
+- `tools/check-vulkan-device.cmake` runs the prefix's `vulkaninfo` on the prefix's loader and the
+  KosmicKrisp driver on macOS.
+- `tools/sanity.sh` runs on macOS (the `ninja-macos` tree with `ninja-macos-sanity` / `-small`, the
+  `appleclang` prefix, KosmicKrisp as the default Vulkan driver, uptime from `sysctl kern.boottime`,
+  logs in `<root>/_build/sanity-macos/`).
+- CI (`dvv-ci.yml`): the jobs `macos-appleclang` and `macos-appleclang-asan` on the `xcode-27` runner.
+  The Vulkan device check never fails the job; the display tests are left out unless it finds a
+  device and a desktop session. `DVV_REQUIRE_FFMPEG=1` as on Windows and Linux. A caller that
+  requires the CI checks may add them.
+- Licence supplements are platform-aware: `dvv_licence_supplement()` takes `PLATFORMS`, the
+  platforms whose build contains the component; elsewhere the file is checked but not attached
+  (custom_ffmpeg's libvpl `third-party-programs.txt` only on Windows and Linux).
+- Privacy lint test: a `/Users/<name>/...` path is flagged.
+- README: the macOS requirements, building on macOS, the macOS CI jobs and sanity on macOS; the
+  examples name v0.2.0.
+
+### Fixed
+- The `dvv_build.dvv_deps` test passes on CMake 4.4: its leak check ignores `_FUNCTION_ARGNC`, which
+  CMake 4.4 leaves behind after `function()` calls.
+- No build-machine paths in the macOS third-party binaries: every superbuild project gets
+  `-ffile-prefix-map` for its source, build and install folders (C, C++, Objective-C,
+  Objective-C++), and the Vulkan loader is configured with `SYSCONFDIR=/etc`.
+
 ## [0.1.2] - 2026-10-29
 
 ### Added

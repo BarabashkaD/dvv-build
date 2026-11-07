@@ -3,11 +3,16 @@
 # apiVersion of MIN_VERSION or newer. CI runs it on Linux before the build, whose GPU tests then
 # must not skip (DVV_REQUIRE_GPU=1).
 #
-# Usage: cmake [-DMIN_VERSION=<major>.<minor>] [-DVULKANINFO=<program>]
+# Usage: cmake [-DMIN_VERSION=<major>.<minor>] [-DVULKANINFO=<program>] [-DPREFIX=<prefix>]
 #              -P tools/check-vulkan-device.cmake
 #   MIN_VERSION  lowest accepted device API version (default 1.4)
-#   VULKANINFO   the vulkaninfo program (default: vulkaninfo from PATH; Linux package vulkan-tools)
+#   VULKANINFO   the vulkaninfo program (default: vulkaninfo from PATH; Linux package vulkan-tools;
+#                on macOS <PREFIX>/bin/vulkaninfo)
+#   PREFIX       macOS only: the third-party prefix (default <dvv root>/_third_party/appleclang)
 #   SUMMARY_FILE checks saved `vulkaninfo --summary` output instead of running vulkaninfo (tests)
+# On macOS vulkaninfo runs on the prefix's loader and its KosmicKrisp driver only:
+# DYLD_LIBRARY_PATH=<PREFIX>/lib (the SDK's vulkaninfo opens libvulkan.dylib by its bare name) and
+# VK_DRIVER_FILES=<PREFIX>/share/vulkan/icd.d/libkosmickrisp_icd.json.
 cmake_minimum_required(VERSION 4.2)
 
 if(NOT DEFINED MIN_VERSION)
@@ -21,14 +26,32 @@ endif()
 if(DEFINED SUMMARY_FILE)
     file(READ "${SUMMARY_FILE}" summary)
 else()
-    if(NOT DEFINED VULKANINFO)
+    set(run "")
+    if(CMAKE_HOST_APPLE)
+        if(NOT DEFINED PREFIX)
+            cmake_path(SET PREFIX NORMALIZE
+                       "${CMAKE_CURRENT_LIST_DIR}/../../_third_party/appleclang")
+        endif()
+        set(manifest "${PREFIX}/share/vulkan/icd.d/libkosmickrisp_icd.json")
+        if(NOT EXISTS "${manifest}")
+            message(FATAL_ERROR "check-vulkan-device: no KosmicKrisp manifest ${manifest}; run "
+                                "bootstrap")
+        endif()
+        if(NOT DEFINED VULKANINFO)
+            set(VULKANINFO "${PREFIX}/bin/vulkaninfo")
+        endif()
+        set(environment "VK_DRIVER_FILES=${manifest}" "DYLD_LIBRARY_PATH=${PREFIX}/lib")
+        list(JOIN environment " " shown)
+        message(STATUS "check-vulkan-device: ${shown}")
+        set(run "${CMAKE_COMMAND}" -E env ${environment})
+    elseif(NOT DEFINED VULKANINFO)
         find_program(VULKANINFO vulkaninfo)
         if(NOT VULKANINFO)
             message(FATAL_ERROR
                     "check-vulkan-device: vulkaninfo not found (Linux: install vulkan-tools)")
         endif()
     endif()
-    execute_process(COMMAND "${VULKANINFO}" --summary
+    execute_process(COMMAND ${run} "${VULKANINFO}" --summary
                     RESULT_VARIABLE status OUTPUT_VARIABLE summary ERROR_VARIABLE errors)
     message("${summary}")
     if(NOT status EQUAL 0)

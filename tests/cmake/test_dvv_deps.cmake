@@ -28,8 +28,9 @@ set(DVV_DEPS_FILE "${DVV_DEPS_FILE}/DvvDepsFile.cmake")
 # Writes the fake project <name> in <dir> with project version <version> ("none": no VERSION);
 # ARGN = its dvv-deps.txt lines. The top level records its variables right before dvv_dependencies();
 # each dependency reports, as leaked=[...], the variables it starts with beyond those, except
-# CMake's and FetchContent's own and the _dvv_deps_ prefix. The top level reports, as leaked=[...],
-# what dvv_dependencies() gave back beyond its documented results.
+# CMake's (CMake 4.4 leaks _FUNCTION_ARGNC from function() scopes) and FetchContent's own and the
+# _dvv_deps_ prefix. The top level reports, as leaked=[...], what dvv_dependencies() gave back beyond
+# its documented results.
 function(fixture_project dir name version call_args)
     set(deps "# dvv dependencies: <repository> <minimum version>, dependency order (read by dvv-build).\n")
     foreach(line IN LISTS ARGN)
@@ -47,7 +48,7 @@ set(_fx_leaked \"\")
 if(_fx_top_vars)
     get_cmake_property(_fx_leaked VARIABLES)
     list(REMOVE_ITEM _fx_leaked \${_fx_top_vars})
-    list(FILTER _fx_leaked EXCLUDE REGEX \"^(_dvv_deps_|_fx_|CMAKE_|FETCHCONTENT_|_?FetchContent_|__cmake|ARG[VNC])\")
+    list(FILTER _fx_leaked EXCLUDE REGEX \"^(_dvv_deps_|_fx_|CMAKE_|FETCHCONTENT_|_?FetchContent_|__cmake|_FUNCTION_|ARG[VNC])\")
     # FetchContent's and project()'s own results for the deps added before this one.
     list(FILTER _fx_leaked EXCLUDE REGEX \"^dvv_[a-z]+_(SOURCE_DIR|BINARY_DIR|POPULATED|IS_TOP_LEVEL)$\")
 endif()
@@ -63,7 +64,7 @@ if(PROJECT_IS_TOP_LEVEL)
     # The caller gets DVV_BUILD_VERSION and dvv_<x>_MIN_VERSION|SOURCE_DIR|BINARY_DIR back, nothing else.
     get_cmake_property(_fx_leaked VARIABLES)
     list(REMOVE_ITEM _fx_leaked \${_fx_vars})
-    list(FILTER _fx_leaked EXCLUDE REGEX \"^(_fx_|CMAKE_|FETCHCONTENT_|DVV_BUILD_VERSION$)\")
+    list(FILTER _fx_leaked EXCLUDE REGEX \"^(_fx_|_FUNCTION_|CMAKE_|FETCHCONTENT_|DVV_BUILD_VERSION$)\")
     list(FILTER _fx_leaked EXCLUDE REGEX \"^dvv_[a-z]+_(MIN_VERSION|SOURCE_DIR|BINARY_DIR|IS_TOP_LEVEL)$\")
 endif()
 get_property(configure_deps DIRECTORY PROPERTY CMAKE_CONFIGURE_DEPENDS)

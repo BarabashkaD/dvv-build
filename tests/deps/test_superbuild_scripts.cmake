@@ -128,12 +128,20 @@ file(WRITE "${WORK_DIR}/supplement-pin/licenses/probe-supplement/a/LICENSE" "pro
 file(SHA256 "${WORK_DIR}/supplement-pin/licenses/probe-supplement/a/LICENSE" probe_hash)
 file(WRITE "${probe}" "include(\"${CMAKE_CURRENT_LIST_DIR}/../../cmake/DvvThirdParty.cmake\")
 set(CMAKE_SYSTEM_NAME Windows)
+if(DEFINED PROBE_SYSTEM)
+    set(CMAKE_SYSTEM_NAME \${PROBE_SYSTEM})
+endif()
+set(platforms_arg \"\")
+if(DEFINED PROBE_PLATFORMS)
+    string(REPLACE \",\" \";\" platforms \"\${PROBE_PLATFORMS}\")
+    set(platforms_arg PLATFORMS \${platforms})
+endif()
 if(NOT PROBE_UNDECLARED)
     dvv_third_party(probe VERSION 1.0 URL https://example.com/p.tgz SHA256 ${hash_zero}
         SPDX MIT LINKAGE runtime LICENSE_FILES LICENSE ONLY_ON Linux PREBUILT)
 endif()
 dvv_licence_supplement(probe FILE \"\${PROBE_FILE}\" COMPONENT Lib VERSION 2.1
-    URL https://example.com/LICENSE SHA256 \"\${PROBE_SHA256}\")
+    URL https://example.com/LICENSE SHA256 \"\${PROBE_SHA256}\" \${platforms_arg})
 get_property(supplements GLOBAL PROPERTY DVV_THIRD_PARTY_probe_SUPPLEMENTS)
 message(STATUS \"supplements=<\${supplements}>\")
 ")
@@ -150,6 +158,18 @@ run_script(1 "dvv_licence_supplement\\(probe\\): probe is not declared before it
            -DPROBE_FILE=a/LICENSE -DPROBE_SHA256=${probe_hash} -DPROBE_UNDECLARED=1)
 run_script(1 "FILE must be a relative path with '/' and without '..'" "${probe}"
            -DPROBE_FILE=../probe.cmake -DPROBE_SHA256=${probe_hash})
+# PLATFORMS: the supplement is attached only where its component is built; its file is still
+# checked everywhere.
+run_script(0 "supplements=<[^>]*/a/LICENSE\\|" "${probe}" -DPROBE_FILE=a/LICENSE
+           -DPROBE_SHA256=${probe_hash} -DPROBE_SYSTEM=Linux "-DPROBE_PLATFORMS=Windows,Linux")
+run_script(0 "supplements=<>" "${probe}" -DPROBE_FILE=a/LICENSE -DPROBE_SHA256=${probe_hash}
+           -DPROBE_SYSTEM=Darwin "-DPROBE_PLATFORMS=Windows,Linux")
+run_script(1 "a/LICENSE has SHA256 ${probe_hash}, pinned ${hash_zero}" "${probe}"
+           -DPROBE_FILE=a/LICENSE -DPROBE_SHA256=${hash_zero} -DPROBE_SYSTEM=Darwin
+           "-DPROBE_PLATFORMS=Windows,Linux")
+run_script(1 "dvv_licence_supplement\\(probe\\): PLATFORMS must name Windows, Linux or Darwin, \
+not 'FreeBSD'" "${probe}" -DPROBE_FILE=a/LICENSE -DPROBE_SHA256=${probe_hash}
+           -DPROBE_PLATFORMS=FreeBSD)
 
 # post-install/vk-bootstrap.cmake installs the source file that dvv-gpu compiles.
 set(source "${WORK_DIR}/vk-bootstrap/source")
@@ -206,5 +226,125 @@ run_script(1 "dvv_third_party\\(probe\\): CONFIGS Debug Release needs a multi-co
 run_script(0 "configs=<Release>" "${probe}" -DMULTI_CONFIG=0 -DPROBE_CONFIGS=none)
 run_script(0 "configs=<Release>" "${probe}" -DMULTI_CONFIG=0 -DPROBE_CONFIGS=release)
 run_script(0 "configs=<Debug;Release>" "${probe}" -DMULTI_CONFIG=1 -DPROBE_CONFIGS=both)
+
+# dvv_third_party_common_args(): the arguments every built project gets. On Apple they carry the
+# deployment target and the architectures (a plain build would target the SDK's version); elsewhere
+# they are unchanged.
+set(probe "${WORK_DIR}/common-args/probe.cmake")
+file(WRITE "${probe}" "include(\"${CMAKE_CURRENT_LIST_DIR}/../../cmake/DvvThirdParty.cmake\")
+set(APPLE \"\${PROBE_APPLE}\")
+set(CMAKE_GENERATOR \"\${PROBE_GENERATOR}\")
+set(CMAKE_C_COMPILER cc-probe)
+set(CMAKE_CXX_COMPILER cxx-probe)
+set(CMAKE_OSX_DEPLOYMENT_TARGET \"\${PROBE_TARGET}\")
+set(CMAKE_OSX_ARCHITECTURES \"\${PROBE_ARCHITECTURES}\")
+dvv_third_party_common_args(args)
+list(JOIN args \"|\" args)
+message(STATUS \"args=<\${args}>\")
+")
+set(base_args "--no-warn-unused-cli\\|-DCMAKE_INSTALL_PREFIX=<INSTALL_DIR>\\|\
+-DCMAKE_PREFIX_PATH=<INSTALL_DIR>\\|-DCMAKE_BUILD_TYPE=Release\\|-DCMAKE_C_COMPILER=cc-probe\\|\
+-DCMAKE_CXX_COMPILER=cxx-probe")
+# On Apple every compiled language maps the project's source, build and install folders out of
+# __FILE__ and debug information, so shipped binaries carry no machine path.
+set(maps "-ffile-prefix-map=<SOURCE_DIR>/= -ffile-prefix-map=<BINARY_DIR>/= \
+-ffile-prefix-map=<INSTALL_DIR>/=")
+run_script(0 "args=<${base_args}\\|-DCMAKE_OSX_DEPLOYMENT_TARGET=27\\.0\\|\
+-DCMAKE_OSX_ARCHITECTURES=arm64\\|-DCMAKE_OBJC_COMPILER=cc-probe\\|\
+-DCMAKE_OBJCXX_COMPILER=cxx-probe\\|-DCMAKE_C_FLAGS=${maps}\\|-DCMAKE_CXX_FLAGS=${maps}\\|\
+-DCMAKE_OBJC_FLAGS=${maps}\\|-DCMAKE_OBJCXX_FLAGS=${maps}>" "${probe}" -DPROBE_APPLE=1
+           -DPROBE_GENERATOR=Ninja -DPROBE_TARGET=27.0 -DPROBE_ARCHITECTURES=arm64)
+run_script(1 "CMAKE_OSX_DEPLOYMENT_TARGET and CMAKE_OSX_ARCHITECTURES must be set on Apple"
+           "${probe}" -DPROBE_APPLE=1 -DPROBE_GENERATOR=Ninja -DPROBE_ARCHITECTURES=arm64)
+run_script(0 "args=<${base_args}>" "${probe}" -DPROBE_APPLE=0 -DPROBE_GENERATOR=Ninja
+           -DPROBE_TARGET=27.0 -DPROBE_ARCHITECTURES=arm64)
+run_script(0 "args=<${base_args}\\|-DCMAKE_VS_GLOBALS=UseMultiToolTask=true>" "${probe}"
+           -DPROBE_APPLE=0 "-DPROBE_GENERATOR=Visual Studio 18 2026")
+
+# dvv_third_party_shared_archive(): a PREBUILT entry with the URL and SHA256 of an entry it depends
+# on shares that entry's archive.
+set(probe "${WORK_DIR}/shared-archive/probe.cmake")
+file(WRITE "${probe}" "include(\"${CMAKE_CURRENT_LIST_DIR}/../../cmake/DvvThirdParty.cmake\")
+set(CMAKE_SYSTEM_NAME Darwin)
+set(sdk URL https://example.com/sdk.zip SHA256 ${hash_zero} SPDX MIT LICENSE_FILES LICENSE PREBUILT)
+dvv_third_party(other VERSION 1 URL https://example.com/other.zip
+    SHA256 1111111111111111111111111111111111111111111111111111111111111111
+    SPDX MIT LINKAGE tool LICENSE_FILES LICENSE PREBUILT)
+dvv_third_party(driver VERSION 1 \${sdk} LINKAGE runtime)
+dvv_third_party(tool VERSION 1 \${sdk} LINKAGE tool DEPENDS other driver)
+dvv_third_party(alone VERSION 1 \${sdk} LINKAGE tool)
+foreach(name IN ITEMS other driver tool alone)
+    dvv_third_party_shared_archive(\${name} shared)
+    message(STATUS \"\${name}=<\${shared}>\")
+endforeach()
+")
+run_script(0 "other=<> -- driver=<> -- tool=<driver> -- alone=<>" "${probe}")
+
+# post-install/kosmickrisp.cmake runs the LunarG SDK installer (its core component only) into the
+# build tree, copies the KosmicKrisp driver, its manifest (library_path relative to the manifest)
+# and vulkaninfo into the prefix, keeps the SDK's licence statement for the notices and removes the
+# installer and the installed SDK. The fake installer is a shell script, so not on Windows.
+if(NOT CMAKE_HOST_WIN32)
+    set(script "${deps}/post-install/kosmickrisp.cmake")
+    set(source "${WORK_DIR}/kosmickrisp/source")
+    set(binary "${WORK_DIR}/kosmickrisp/binary")
+    set(prefix "${WORK_DIR}/kosmickrisp/prefix")
+    set(installer "${source}/Contents/MacOS/vulkansdk-macOS-1.4.363.1")
+    set(args_file "${WORK_DIR}/kosmickrisp/installer-args.txt")
+    # The fake records its arguments and installs the SDK layout under --root.
+    file(WRITE "${installer}" "#!/bin/sh
+echo \"$@\" > '${args_file}'
+while [ $# -gt 0 ]; do
+    if [ \"$1\" = --root ]; then root=$2; fi
+    shift
+done
+mkdir -p \"$root/macOS/lib\" \"$root/macOS/bin\" \"$root/macOS/share/vulkan/icd.d\" \"$root/Licenses\"
+echo driver > \"$root/macOS/lib/libvulkan_kosmickrisp.dylib\"
+echo moltenvk > \"$root/macOS/lib/libMoltenVK.dylib\"
+printf '#!/bin/sh\\necho vulkaninfo\\n' > \"$root/macOS/bin/vulkaninfo\"
+chmod +x \"$root/macOS/bin/vulkaninfo\"
+printf '{\\n    \"ICD\": {\\n        \"api_version\": \"1.4.0\",\\n        \"library_path\": \"libvulkan_kosmickrisp.dylib\"\\n    },\\n    \"file_format_version\": \"1.0.0\"\\n}\\n' > \"$root/macOS/share/vulkan/icd.d/libkosmickrisp_icd.json\"
+echo moltenvk > \"$root/macOS/share/vulkan/icd.d/MoltenVK_icd.json\"
+echo 'LunarG statement' > \"$root/Licenses/LICENSE.txt\"
+echo 'Revisions' > \"$root/VERSIONS.txt\"
+")
+    file(CHMOD "${installer}" PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE)
+    run_script(1 "pass -DBINARY_DIR" "${script}" "-DSOURCE_DIR=${source}" "-DPREFIX=${prefix}")
+    run_script(0 "" "${script}" "-DSOURCE_DIR=${source}" "-DPREFIX=${prefix}"
+               "-DBINARY_DIR=${binary}")
+    expect_file_text("${args_file}" "^--root ${binary}/sdk --accept-licenses --default-answer \
+--confirm-command install com\\.lunarg\\.vulkan\\.core\n$")
+    expect_file_text("${prefix}/lib/libvulkan_kosmickrisp.dylib" "^driver\n$")
+    expect_file_text("${prefix}/share/vulkan/icd.d/libkosmickrisp_icd.json"
+        "\"api_version\": \"1\\.4\\.0\",\n *\"library_path\": \"\\.\\./\\.\\./\\.\\./lib/\
+libvulkan_kosmickrisp\\.dylib\"\n")
+    expect_file_text("${prefix}/bin/vulkaninfo" "echo vulkaninfo")
+    execute_process(COMMAND "${prefix}/bin/vulkaninfo" RESULT_VARIABLE status OUTPUT_QUIET)
+    if(NOT status EQUAL 0)
+        message(FATAL_ERROR "FAIL: the copied vulkaninfo is not executable")
+    endif()
+    expect_file_text("${source}/Licenses/LICENSE.txt" "LunarG statement")
+    expect_file_text("${source}/VERSIONS.txt" "Revisions")
+    foreach(gone IN ITEMS "${prefix}/lib/libMoltenVK.dylib"
+                          "${prefix}/share/vulkan/icd.d/MoltenVK_icd.json" "${binary}/sdk"
+                          "${source}/Contents")
+        if(EXISTS "${gone}")
+            message(FATAL_ERROR "FAIL: ${gone} exists after the KosmicKrisp post-install")
+        endif()
+    endforeach()
+    # Run again without the installer (the extract step did not run again): nothing to do.
+    run_script(0 "KosmicKrisp is already installed" "${script}" "-DSOURCE_DIR=${source}"
+               "-DPREFIX=${prefix}" "-DBINARY_DIR=${binary}")
+    # Without the installer and without the installed files it cannot recover.
+    file(REMOVE "${prefix}/lib/libvulkan_kosmickrisp.dylib")
+    run_script(1 "the SDK installer is not in .*; run bootstrap with --force" "${script}"
+               "-DSOURCE_DIR=${source}" "-DPREFIX=${prefix}" "-DBINARY_DIR=${binary}")
+    # A failing installer fails the step.
+    file(MAKE_DIRECTORY "${source}/Contents/MacOS")
+    file(WRITE "${installer}" "#!/bin/sh\necho 'installer broke' >&2\nexit 3\n")
+    file(CHMOD "${installer}" PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE)
+    run_script(1 "the Vulkan SDK installer failed \\(3\\).*installer broke" "${script}"
+               "-DSOURCE_DIR=${source}" "-DPREFIX=${prefix}" "-DBINARY_DIR=${binary}")
+endif()
 
 message(STATUS "superbuild script tests passed")

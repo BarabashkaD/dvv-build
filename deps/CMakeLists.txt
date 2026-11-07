@@ -6,6 +6,8 @@
 #
 #   cmake -S deps -B <build dir> -DDVV_THIRD_PARTY_PREFIX=<install dir> [-DDVV_BUNDLE_FFMPEG=OFF]
 #         [-G Ninja -DCMAKE_C_COMPILER=clang-19 -DCMAKE_CXX_COMPILER=clang++-19]   (Linux)
+#         [-G Ninja -DCMAKE_C_COMPILER=/usr/bin/clang -DCMAKE_CXX_COMPILER=/usr/bin/clang++
+#          -DCMAKE_OSX_DEPLOYMENT_TARGET=27.0 -DCMAKE_OSX_ARCHITECTURES=arm64]   (macOS)
 #   cmake --build <build dir> --config Release --parallel
 # bootstrap.ps1 and bootstrap.sh run these two commands.
 cmake_minimum_required(VERSION 4.2)
@@ -25,19 +27,9 @@ endif()
 cmake_path(ABSOLUTE_PATH DVV_THIRD_PARTY_PREFIX BASE_DIRECTORY "${CMAKE_BINARY_DIR}"
            NORMALIZE OUTPUT_VARIABLE prefix)
 
-# Every project finds the ones installed before it in the prefix. Every project gets both
-# compilers, and a C++-only project need not report the unused C one.
-set(common_args
-    --no-warn-unused-cli
-    "-DCMAKE_INSTALL_PREFIX=<INSTALL_DIR>"
-    "-DCMAKE_PREFIX_PATH=<INSTALL_DIR>"
-    "-DCMAKE_BUILD_TYPE=Release"
-    "-DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}"
-    "-DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}")
-if(CMAKE_GENERATOR MATCHES "^Visual Studio")
-    # MSBuild otherwise compiles the files of one project one after another.
-    list(APPEND common_args "-DCMAKE_VS_GLOBALS=UseMultiToolTask=true")
-endif()
+# Every project finds the ones installed before it in the prefix, gets both compilers and, on
+# Apple, the deployment target and architectures (DvvThirdParty.cmake).
+dvv_third_party_common_args(common_args)
 
 get_property(names GLOBAL PROPERTY DVV_THIRD_PARTY_NAMES)
 get_property(multi_config GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
@@ -52,11 +44,23 @@ foreach(name IN LISTS names)
     endforeach()
     if(POST_INSTALL)
         set(post_install "${CMAKE_COMMAND}" -DSOURCE_DIR=<SOURCE_DIR> -DPREFIX=<INSTALL_DIR>
-                         -P "${POST_INSTALL}")
+                         -DBINARY_DIR=<BINARY_DIR> -P "${POST_INSTALL}")
     else()
         set(post_install "${CMAKE_COMMAND}" -E true)
     endif()
-    if(PREBUILT)
+    dvv_third_party_shared_archive(${name} shared_archive)
+    if(shared_archive)
+        # The archive of an entry this one depends on, already extracted into <prefix>/<that
+        # entry>: nothing to download or extract.
+        ExternalProject_Add(${name}
+            DOWNLOAD_COMMAND ""
+            SOURCE_DIR "${prefix}/${shared_archive}"
+            INSTALL_DIR "${prefix}"
+            DEPENDS ${DEPENDS}
+            CONFIGURE_COMMAND ""
+            BUILD_COMMAND ""
+            INSTALL_COMMAND ${post_install})
+    elseif(PREBUILT)
         # The archive is extracted straight into <prefix>/<name>. The extract step replaces that
         # directory as a whole, so no file of an older version survives an update.
         ExternalProject_Add(${name}
