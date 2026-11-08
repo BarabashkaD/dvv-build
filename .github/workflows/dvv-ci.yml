@@ -94,6 +94,10 @@ jobs:
   #   prefix     path <DVV_ROOT>/_third_party/<tc>, key third-party-<runner.os>-<tc>-<hash of
   #              deps/**, cmake/DvvThirdParty.cmake and cmake/DvvSpdx.cmake>: the inputs of
   #              bootstrap's own up-to-date stamp.
+  # A third entry, downloads (path <DVV_ROOT>/_build/downloads, key downloads-<runner.os>-<hash of
+  # the URL and SHA256 lines of deps/versions.cmake>), keeps the archives bootstrap downloads; a
+  # prime job with work to do restores it, falling back to an older entry, so it downloads only what
+  # the pins changed.
   # A prime job looks both keys up without downloading; when both exist it stops there. Otherwise it
   # restores what exists, bootstraps (the superbuild runs whole: with a fresh build tree it
   # reinstalls the prefix too, and skips wx when its marker matches) and saves each missed entry.
@@ -163,6 +167,13 @@ jobs:
           $fingerprint = [Convert]::ToHexString($sha).ToLowerInvariant().Substring(0, 16)
           "wx=wx-$env:RUNNER_OS-$env:TOOLCHAIN-$wxHash-$fingerprint" >> $env:GITHUB_OUTPUT
           "prefix=third-party-$env:RUNNER_OS-$env:TOOLCHAIN-$env:PREFIX_HASH" >> $env:GITHUB_OUTPUT
+          # The pins only (the URL and SHA256 lines of versions.cmake): an edit elsewhere in the
+          # file keeps the downloads entry.
+          $pinLines = Get-Content (Join-Path $env:DVV_BUILD 'deps/versions.cmake') |
+            Where-Object { $_ -match '^\s*(URL|SHA256)\s' } | ForEach-Object { $_.Trim() }
+          $pinBytes = [Text.Encoding]::UTF8.GetBytes(($pinLines -join "`n") + "`n")
+          $pins = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($pinBytes)).ToLowerInvariant()
+          "downloads=downloads-$env:RUNNER_OS-$pins" >> $env:GITHUB_OUTPUT
       - &lookup-wx
         name: Look up wxWidgets
         id: wx-lookup
@@ -210,6 +221,18 @@ jobs:
         with:
           path: ${{ env.DVV_ROOT }}/_third_party/${{ env.TOOLCHAIN }}
           key: ${{ steps.keys.outputs.prefix }}
+      # The downloaded archives (bootstrap keeps them in <root>/_build/downloads), so a prime job
+      # downloads only what its pins changed. An older entry may be restored (restore-keys): the
+      # superbuild uses an archive only when its SHA256 matches the pin and downloads the others.
+      - &prime-restore-downloads
+        name: Restore downloads
+        id: downloads
+        if: steps.need.outputs.run == 'true'
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ env.DVV_ROOT }}/_build/downloads
+          key: ${{ steps.keys.outputs.downloads }}
+          restore-keys: downloads-${{ runner.os }}-
       # A superbuild of what is missing: it skips wxWidgets when the restored marker matches.
       - name: Bootstrap
         if: steps.need.outputs.run == 'true'
@@ -231,6 +254,13 @@ jobs:
         with:
           path: ${{ env.DVV_ROOT }}/_third_party/${{ env.TOOLCHAIN }}
           key: ${{ steps.keys.outputs.prefix }}
+      - &save-downloads
+        name: Save downloads
+        if: steps.need.outputs.run == 'true' && steps.downloads.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ env.DVV_ROOT }}/_build/downloads
+          key: ${{ steps.downloads.outputs.cache-primary-key }}
 
   prime-linux:
     needs: dvv-build-min
@@ -270,11 +300,17 @@ jobs:
           fingerprint=$(printf '%s\n' "$compiler" | shasum -a 256 | cut -c1-16)
           echo "wx=wx-$RUNNER_OS-$TOOLCHAIN-${wx_hash:0:16}-$fingerprint" >> "$GITHUB_OUTPUT"
           echo "prefix=third-party-$RUNNER_OS-$TOOLCHAIN-$PREFIX_HASH" >> "$GITHUB_OUTPUT"
+          # The pins only (the URL and SHA256 lines of versions.cmake): an edit elsewhere in the
+          # file keeps the downloads entry.
+          pins=$(grep -E '^[[:space:]]*(URL|SHA256)[[:space:]]' "$DVV_BUILD/deps/versions.cmake" |
+            sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' | shasum -a 256 | cut -c1-64)
+          echo "downloads=downloads-$RUNNER_OS-$pins" >> "$GITHUB_OUTPUT"
       - *lookup-wx
       - *lookup-prefix
       - *need
       - *prime-restore-wx
       - *prime-restore-prefix
+      - *prime-restore-downloads
       # Window-system and GUI packages: bootstrap checks them and builds wxWidgets on GTK 3.
       - name: Install Linux window-system packages
         if: steps.need.outputs.run == 'true'
@@ -284,6 +320,7 @@ jobs:
         run: ./${{ env.DVV_BUILD }}/bootstrap.sh --toolchain "$TOOLCHAIN"
       - *save-wx
       - *save-prefix
+      - *save-downloads
 
   prime-macos:
     needs: dvv-build-min
@@ -302,6 +339,7 @@ jobs:
       - *need
       - *prime-restore-wx
       - *prime-restore-prefix
+      - *prime-restore-downloads
       - name: Bootstrap
         if: steps.need.outputs.run == 'true'
         run: |
@@ -309,6 +347,7 @@ jobs:
           ./${{ env.DVV_BUILD }}/bootstrap.sh --toolchain "$TOOLCHAIN"
       - *save-wx
       - *save-prefix
+      - *save-downloads
 
   # Build jobs, one matrix per OS after its prime job. They restore both entries and never save;
   # bootstrap takes its fast path (or, if an entry is still missing, builds it). Windows: one job

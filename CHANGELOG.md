@@ -5,6 +5,18 @@ versions follow semantic versioning with the dvv rules: compatible = the same ma
 minimum version, also for 0.x; breaking changes only in a new major, after a deprecation. This file is
 the release notes (there are no GitHub Releases).
 
+## [0.3.2] - 2026-11-08
+
+### Changed
+- bootstrap keeps the downloaded archives in `<root>/_build/downloads` (superbuild option
+  `DVV_DOWNLOAD_DIR`), outside the build tree it removes; an archive found there is used while its
+  SHA256 matches the pin. In CI the prime jobs cache that folder per OS (key: the `URL` and
+  `SHA256` lines of `deps/versions.cmake`, falling back to an older entry), so a cold prime
+  downloads only what the pins changed. During GitHub's incident of 2026-11-08 ("timeouts for some
+  unauthenticated users") every cold job failed on downloads from github.com.
+- A failed third-party build is run again after 1 and then 5 minutes (was 30 seconds twice): the
+  incident above outlasted three attempts 30 seconds apart.
+
 ## [0.3.1] - 2026-11-08
 
 ### Fixed
