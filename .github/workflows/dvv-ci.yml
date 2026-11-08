@@ -493,49 +493,71 @@ jobs:
         run: |
           brew install ninja
           ./${{ env.DVV_BUILD }}/bootstrap.sh --toolchain "$TOOLCHAIN"
-      # The runner's paravirtual Metal device may not run KosmicKrisp (spec C10), so this step never
-      # fails the job: it prints the device check and records in `device` whether a Vulkan 1.4 device
-      # and a desktop session (WindowServer) exist. The next step runs the GPU tests as required only
-      # then and leaves out the display tests otherwise; without a device the GPU tests skip (77).
-      - name: Check the Vulkan device
+      # The Vulkan driver of the GPU tests (tools/select-vulkan-driver.cmake): the prefix's KosmicKrisp
+      # when the runner's Metal device can run it (spec C10: the paravirtual device of GitHub's runners
+      # cannot), otherwise Mesa's lavapipe from Homebrew's mesa bottle. lavapipe is a CI-only
+      # exception to U-MAC2 (KosmicKrisp only), never in the prefix or a package, as Linux CI takes
+      # it from apt. A prefix without KosmicKrisp or a failed lavapipe fails the job; the repository
+      # variable DVV_MACOS_SOFTWARE_GPU=off skips lavapipe (the GPU tests then skip, as before
+      # dvv-build 0.4.0), a way out of a bad Homebrew bottle without a release. Outputs: driver
+      # (kosmickrisp, lavapipe or none), manifest and display (1 only on KosmicKrisp with a desktop
+      # session).
+      - name: Choose the Vulkan driver
         id: vulkan
-        continue-on-error: true
+        timeout-minutes: 20
+        env:
+          SWITCH: ${{ vars.DVV_MACOS_SOFTWARE_GPU }}
+          PREFIX: ${{ github.workspace }}/${{ env.DVV_ROOT }}/_third_party/${{ env.TOOLCHAIN }}
+        run: cmake "-DPREFIX=$PREFIX" "-DSWITCH=$SWITCH" -P "$DVV_BUILD/tools/select-vulkan-driver.cmake"
+      # Only the chosen driver and the validation layer load: Homebrew's mesa also installs MoltenVK
+      # and its own KosmicKrisp, which must never load, and no other layer may join.
+      - name: Check what the Vulkan loader loads
+        if: steps.vulkan.outputs.driver != 'none'
+        env:
+          MANIFEST: ${{ steps.vulkan.outputs.manifest }}
+          PREFIX: ${{ github.workspace }}/${{ env.DVV_ROOT }}/_third_party/${{ env.TOOLCHAIN }}
         run: |
-          device=0
-          if cmake -P "$DVV_BUILD/tools/check-vulkan-device.cmake"; then
-            if pgrep -x WindowServer > /dev/null; then
-              device=1
-            else
-              echo "::notice::A Vulkan device was found but there is no desktop session; the display tests are left out"
-            fi
-          else
-            echo "::notice::No usable Vulkan device on this runner; the GPU tests skip and the display tests are left out"
+          log=$(env VK_DRIVER_FILES="$MANIFEST" VK_LOADER_DEBUG=driver,layer \
+            VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation \
+            VK_ADD_LAYER_PATH="$PREFIX/share/vulkan/explicit_layer.d" \
+            DYLD_FALLBACK_LIBRARY_PATH="$PREFIX/lib" "$PREFIX/bin/vulkaninfo" --summary 2>&1) ||
+            { printf '%s\n' "$log"; echo "::error::vulkaninfo failed with VK_LOADER_DEBUG"; exit 1; }
+          drivers=$(printf '%s\n' "$log" |
+            sed -n 's/.*DRIVER: *Found ICD manifest file \(.*\), version.*/\1/p' | sort -u)
+          layers=$(printf '%s\n' "$log" |
+            sed -n 's/.*LAYER: *\(VK_LAYER_[A-Za-z0-9_]*\)[[:space:]]*$/\1/p' | sort -u)
+          echo "Driver manifests the loader found: $drivers"
+          echo "Active layers: $layers"
+          if [ "$drivers" != "$MANIFEST" ] || [ "$layers" != VK_LAYER_KHRONOS_validation ]; then
+            printf '%s\n' "$log" | grep -E 'DRIVER|LAYER' || true
+            echo "::error::the loader loaded more than the chosen driver and the validation layer"
+            exit 1
           fi
-          echo "device=$device" >> "$GITHUB_OUTPUT"
-      # The workflow preset's steps for this entry, with CTest's `-LE display` added unless the
-      # device check found a device and a desktop session. With a device the GPU tests are required to
-      # run (as on Linux, on KosmicKrisp in the prefix) with synchronization validation; ninja-macos
-      # builds and tests Release too. FFmpeg (custom_ffmpeg in the prefix) is required as on Windows and
-      # Linux. NO_AT_BRIDGE is a GTK setting and not needed here.
+      # The workflow preset's steps for this entry. With a driver, the tests run on it
+      # (DVV_TEST_VK_DRIVER_FILES) and the GPU tests are required with synchronization validation, as
+      # on Linux; the display tests only when the driver step allows them (`-LE display` otherwise).
+      # Without one (DVV_MACOS_SOFTWARE_GPU=off) the GPU tests skip. ninja-macos builds and tests
+      # Release too. FFmpeg (custom_ffmpeg in the prefix) is required as on Windows and Linux.
       - name: Build and test
         working-directory: ${{ inputs.repo }}
         env:
-          DEVICE: ${{ steps.vulkan.outputs.device }}
+          DRIVER: ${{ steps.vulkan.outputs.driver }}
+          MANIFEST: ${{ steps.vulkan.outputs.manifest }}
+          DISPLAY_TESTS: ${{ steps.vulkan.outputs.display }}
           DVV_REQUIRE_FFMPEG: "1"
           DVV_TEST_DEPENDENCIES: ${{ inputs.test-dependencies && 'ON' || '' }}
           PRESET: ${{ matrix.preset }}
-          PREFIX: ${{ github.workspace }}/${{ env.DVV_ROOT }}/_third_party/${{ env.TOOLCHAIN }}
         run: |
+          configure=()
           tests=()
-          if [ "$DEVICE" = 1 ]; then
+          if [ "$DRIVER" != none ]; then
             export DVV_REQUIRE_GPU=1 DVV_VK_VALIDATION=sync DVV_VK_VALIDATION_REQUIRED=1
-            export VK_DRIVER_FILES="$PREFIX/share/vulkan/icd.d/libkosmickrisp_icd.json"
-          else
-            tests=(-LE display)
+            configure=("-DDVV_TEST_VK_DRIVER_FILES=$MANIFEST")
           fi
+          if [ "$DISPLAY_TESTS" != 1 ]; then tests=(-LE display); fi
           presets=("$PRESET")
           if [ "$PRESET" = ninja-macos ]; then presets+=(ninja-macos-release); fi
-          cmake --preset "$PRESET"
+          cmake --preset "$PRESET" ${configure[@]+"${configure[@]}"}
           for preset in "${presets[@]}"; do
             cmake --build --preset "$preset"
             ctest --preset "$preset" ${tests[@]+"${tests[@]}"}

@@ -50,6 +50,14 @@ add_test(NAME dvv_build.superbuild_scripts
 add_test(NAME dvv_build.check_vulkan_device
          COMMAND ${CMAKE_COMMAND} -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/check-vulkan-device-test
                  -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/ci/test_check_vulkan_device.cmake)
+add_test(NAME dvv_build.select_vulkan_driver
+         COMMAND ${CMAKE_COMMAND} -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/select-vulkan-driver-test
+                 -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/ci/test_select_vulkan_driver.cmake)
+# macOS only (it skips elsewhere): the tests' Vulkan driver, KosmicKrisp or DVV_TEST_VK_DRIVER_FILES.
+add_test(NAME dvv_build.test_driver
+         COMMAND ${CMAKE_COMMAND} -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/test-driver-test
+                 -DGENERATOR=${CMAKE_GENERATOR}
+                 -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/test_test_driver.cmake)
 add_test(NAME dvv_build.privacy_lint
          COMMAND ${CMAKE_COMMAND} -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/privacy-lint-test
                  -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/privacy/test_privacy_lint.cmake)

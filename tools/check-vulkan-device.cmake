@@ -4,15 +4,18 @@
 # must not skip (DVV_REQUIRE_GPU=1).
 #
 # Usage: cmake [-DMIN_VERSION=<major>.<minor>] [-DVULKANINFO=<program>] [-DPREFIX=<prefix>]
-#              -P tools/check-vulkan-device.cmake
+#              [-DDRIVER_FILES=<manifest>] -P tools/check-vulkan-device.cmake
 #   MIN_VERSION  lowest accepted device API version (default 1.4)
 #   VULKANINFO   the vulkaninfo program (default: vulkaninfo from PATH; Linux package vulkan-tools;
 #                on macOS <PREFIX>/bin/vulkaninfo)
 #   PREFIX       macOS only: the third-party prefix (default <dvv root>/_third_party/appleclang)
+#   DRIVER_FILES macOS only: the Vulkan driver manifest to check (default the prefix's KosmicKrisp,
+#                <PREFIX>/share/vulkan/icd.d/libkosmickrisp_icd.json; the CI jobs pass lavapipe's)
 #   SUMMARY_FILE checks saved `vulkaninfo --summary` output instead of running vulkaninfo (tests)
-# On macOS vulkaninfo runs on the prefix's loader and its KosmicKrisp driver only:
-# DYLD_LIBRARY_PATH=<PREFIX>/lib (the SDK's vulkaninfo opens libvulkan.dylib by its bare name) and
-# VK_DRIVER_FILES=<PREFIX>/share/vulkan/icd.d/libkosmickrisp_icd.json.
+# On macOS vulkaninfo runs on the prefix's loader and one driver only: VK_DRIVER_FILES=<DRIVER_FILES>
+# and DYLD_FALLBACK_LIBRARY_PATH=<PREFIX>/lib (the SDK's vulkaninfo opens libvulkan.dylib by its bare
+# name; the fallback path leaves the libraries another driver links, such as lavapipe's Homebrew
+# dependencies, where they are).
 cmake_minimum_required(VERSION 4.2)
 
 if(NOT DEFINED MIN_VERSION)
@@ -32,15 +35,20 @@ else()
             cmake_path(SET PREFIX NORMALIZE
                        "${CMAKE_CURRENT_LIST_DIR}/../../_third_party/appleclang")
         endif()
-        set(manifest "${PREFIX}/share/vulkan/icd.d/libkosmickrisp_icd.json")
+        if(DEFINED DRIVER_FILES)
+            set(manifest "${DRIVER_FILES}")
+            set(hint "")
+        else()
+            set(manifest "${PREFIX}/share/vulkan/icd.d/libkosmickrisp_icd.json")
+            set(hint "; run bootstrap")
+        endif()
         if(NOT EXISTS "${manifest}")
-            message(FATAL_ERROR "check-vulkan-device: no KosmicKrisp manifest ${manifest}; run "
-                                "bootstrap")
+            message(FATAL_ERROR "check-vulkan-device: no driver manifest ${manifest}${hint}")
         endif()
         if(NOT DEFINED VULKANINFO)
             set(VULKANINFO "${PREFIX}/bin/vulkaninfo")
         endif()
-        set(environment "VK_DRIVER_FILES=${manifest}" "DYLD_LIBRARY_PATH=${PREFIX}/lib")
+        set(environment "VK_DRIVER_FILES=${manifest}" "DYLD_FALLBACK_LIBRARY_PATH=${PREFIX}/lib")
         list(JOIN environment " " shown)
         message(STATUS "check-vulkan-device: ${shown}")
         set(run "${CMAKE_COMMAND}" -E env ${environment})

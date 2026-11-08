@@ -55,7 +55,7 @@ Each library and application lists its dvv dependencies in `dvv-deps.txt`, in de
 
 ```text
 # dvv dependencies: <repository> <minimum version>, dependency order (read by dvv-build).
-dvv-build 0.3.2
+dvv-build 0.4.0
 dvv-base 0.1.0
 dvv-platform 0.1.0
 ```
@@ -111,7 +111,8 @@ dvv-platform 0.1.0
   toolchain; `DvvCompilerOptions.cmake` checks it), Homebrew and Git. `brew install ninja` and a
   Python 3 for the tools. The GPU tests run on KosmicKrisp (Mesa's Vulkan driver on Metal), which
   bootstrap installs into the prefix together with the Vulkan loader, `vulkaninfo` and the
-  validation layer; no Vulkan SDK install is needed. The tools (CMake 4, clang-format and
+  validation layer; no Vulkan SDK install is needed. A build tree can run its tests on another
+  driver with `-DDVV_TEST_VK_DRIVER_FILES=<ICD manifest>` (CI uses it for lavapipe). The tools (CMake 4, clang-format and
   clang-tidy 19) come from pip as on Linux, into a virtual environment that is active in every
   shell that builds.
 
@@ -121,7 +122,7 @@ dvv-platform 0.1.0
 
 ```powershell
 git clone <base>/dvv-gpu
-git clone --branch v0.3.2 <base>/dvv-build      # the dvv-build line of dvv-gpu/dvv-deps.txt
+git clone --branch v0.4.0 <base>/dvv-build      # the dvv-build line of dvv-gpu/dvv-deps.txt
 git -C dvv-build config user.name <GitHub handle>
 git -C dvv-build config user.email <GitHub noreply e-mail>
 python -m pip install -r dvv-build/tools/requirements.txt
@@ -247,7 +248,7 @@ concurrency:                      # newer PR pushes cancel older runs; a running
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   ci:
-    uses: <owner>/dvv-build/.github/workflows/dvv-ci.yml@v0.3.2   # = the dvv-build line
+    uses: <owner>/dvv-build/.github/workflows/dvv-ci.yml@v0.4.0   # = the dvv-build line
     with:
       repo: dvv-gpu
 ```
@@ -261,6 +262,16 @@ jobs:
   `test-dependencies: true` to run every library's tests at the pins.
 - dvv-build's own `ci.yml` runs the script tests on Windows and Linux (`tools`) and the reusable
   workflow on dvv-build itself (`self`).
+- macOS GPU tests: the `macos` jobs run them on the prefix's KosmicKrisp when the runner's Metal
+  device can run it. GitHub's `xcode-27` runners cannot, so `tools/select-vulkan-driver.cmake`
+  installs Mesa's lavapipe from Homebrew's `mesa` bottle instead (CI only, never in the prefix or a
+  package; unpinned, as Linux CI's apt lavapipe) and the tests run on it through
+  `DVV_TEST_VK_DRIVER_FILES`, required and with synchronization validation as on Linux. The display
+  tests run only on KosmicKrisp with a desktop session. A prefix without KosmicKrisp, a failed
+  `brew install mesa` (three attempts) or a lavapipe without a Vulkan 1.4 device fails the job, and
+  a check fails it when the loader loads any other driver or layer. A bad Homebrew bottle: set the
+  repository variable `DVV_MACOS_SOFTWARE_GPU` to `off` (or `false`, `0`, `no`; Settings, Secrets and
+  variables, Actions, Variables) and the GPU tests skip on macOS, as before 0.4.0, until a fix is released.
 
 The third-party prefix comes from two caches per toolchain `<tc>`:
 
