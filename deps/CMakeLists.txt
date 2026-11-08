@@ -7,6 +7,7 @@
 # while that marker matches; consumers list both folders in CMAKE_PREFIX_PATH.
 #
 #   cmake -S deps -B <build dir> -DDVV_THIRD_PARTY_PREFIX=<install dir> [-DDVV_BUNDLE_FFMPEG=OFF]
+#         [-DDVV_DOWNLOAD_DIR=<archive dir>]
 #         [-G Ninja -DCMAKE_C_COMPILER=clang-19 -DCMAKE_CXX_COMPILER=clang++-19]   (Linux)
 #         [-G Ninja -DCMAKE_C_COMPILER=/usr/bin/clang -DCMAKE_CXX_COMPILER=/usr/bin/clang++
 #          -DCMAKE_OSX_DEPLOYMENT_TARGET=27.0 -DCMAKE_OSX_ARCHITECTURES=arm64]   (macOS)
@@ -36,6 +37,15 @@ if(NOT DVV_THIRD_PARTY_PREFIX)
 endif()
 cmake_path(ABSOLUTE_PATH DVV_THIRD_PARTY_PREFIX BASE_DIRECTORY "${CMAKE_BINARY_DIR}"
            NORMALIZE OUTPUT_VARIABLE prefix)
+# DVV_DOWNLOAD_DIR (optional): the folder for the downloaded archives, one subfolder per entry.
+# bootstrap passes <root>/_build/downloads, which it never removes (unlike the build tree), so an
+# archive is downloaded once and CI can cache the folder. An archive found there is used only when
+# its SHA256 matches the pin; otherwise ExternalProject downloads it again. Unset: the build tree's
+# Download/ folder, as before.
+if(DVV_DOWNLOAD_DIR)
+    cmake_path(ABSOLUTE_PATH DVV_DOWNLOAD_DIR BASE_DIRECTORY "${CMAKE_BINARY_DIR}" NORMALIZE
+               OUTPUT_VARIABLE download_root)
+endif()
 
 # Every project finds the ones installed before it in the prefix, gets both compilers and, on
 # Apple, the deployment target and architectures (DvvThirdParty.cmake).
@@ -90,6 +100,10 @@ foreach(name IN LISTS names)
         set(post_install "${CMAKE_COMMAND}" -E true)
     endif()
     dvv_third_party_shared_archive(${name} shared_archive)
+    set(download_args "")
+    if(DVV_DOWNLOAD_DIR)
+        set(download_args DOWNLOAD_DIR "${download_root}/${name}")
+    endif()
     if(separate_skip)
         # Nothing to do; the notices read the licence files copied into the separate prefix.
         ExternalProject_Add(${name}
@@ -118,6 +132,7 @@ foreach(name IN LISTS names)
         ExternalProject_Add(${name}
             URL "${URL}"
             URL_HASH "SHA256=${SHA256}"
+            ${download_args}
             DOWNLOAD_EXTRACT_TIMESTAMP TRUE
             SOURCE_DIR "${prefix}/${name}"
             INSTALL_DIR "${prefix}"
@@ -162,6 +177,7 @@ foreach(name IN LISTS names)
         ExternalProject_Add(${name}
             URL "${URL}"
             URL_HASH "SHA256=${SHA256}"
+            ${download_args}
             DOWNLOAD_EXTRACT_TIMESTAMP TRUE
             ${separate_steps}
             INSTALL_DIR "${install_dir}"

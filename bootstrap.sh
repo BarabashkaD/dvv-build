@@ -167,19 +167,21 @@ fi
 cmake -S "$dvv_build/deps" -B "$build" -G Ninja "-DCMAKE_C_COMPILER=$c_compiler" \
     "-DCMAKE_CXX_COMPILER=$compiler" "-DDVV_THIRD_PARTY_PREFIX=$prefix" \
     "-DDVV_BUNDLE_FFMPEG=$bundle_ffmpeg" "-DCMAKE_PROJECT_INCLUDE=$dvv_build/cmake/DvvEpBase.cmake" \
-    $superbuild_args
+    "-DDVV_DOWNLOAD_DIR=$root/_build/downloads" $superbuild_args
 # CMake's downloader does not retry HTTP errors, and download servers (GitHub's among them) answer
-# 503 or 504 at times. A failed build is run again, up to three times in all: the steps that
-# finished are stamped, so only the failed ones (usually a download) run again.
+# 503 or 504 at times, sometimes for hours. A failed build is run again, up to three times in all,
+# after 1 and then 5 minutes: the steps that finished are stamped, so only the failed ones (usually
+# a download) run again. The archives stay in <root>/_build/downloads, which nothing removes.
 attempt=1
 until cmake --build "$build" --config Release --parallel; do
     if [ "$attempt" -ge 3 ]; then
         echo "The third-party build failed $attempt times." >&2
         exit 1
     fi
-    echo "The third-party build failed (attempt $attempt of 3); running it again in 30 seconds." >&2
+    if [ "$attempt" -eq 1 ]; then pause=60; else pause=300; fi
+    echo "The third-party build failed (attempt $attempt of 3); running it again in $pause seconds." >&2
     attempt=$((attempt + 1))
-    sleep 30
+    sleep "$pause"
 done
 printf '%s' "$hash" > "$stamp"
 echo "Third-party dependencies for $toolchain installed."

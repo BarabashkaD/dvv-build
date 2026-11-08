@@ -55,7 +55,7 @@ Each library and application lists its dvv dependencies in `dvv-deps.txt`, in de
 
 ```text
 # dvv dependencies: <repository> <minimum version>, dependency order (read by dvv-build).
-dvv-build 0.3.1
+dvv-build 0.3.2
 dvv-base 0.1.0
 dvv-platform 0.1.0
 ```
@@ -121,7 +121,7 @@ dvv-platform 0.1.0
 
 ```powershell
 git clone <base>/dvv-gpu
-git clone --branch v0.3.1 <base>/dvv-build      # the dvv-build line of dvv-gpu/dvv-deps.txt
+git clone --branch v0.3.2 <base>/dvv-build      # the dvv-build line of dvv-gpu/dvv-deps.txt
 git -C dvv-build config user.name <GitHub handle>
 git -C dvv-build config user.email <GitHub noreply e-mail>
 python -m pip install -r dvv-build/tools/requirements.txt
@@ -151,7 +151,10 @@ tests Release; also `ninja-macos-asan`; there is no ThreadSanitizer preset).
   superbuild skips wxWidgets while its marker matches and removes the root-level
   `lib/cmake/wxWidgets*` package that dvv-build 0.2.0 installed). `-Toolchain msvc|clang`, `-Force`
   removes the build tree and the wxWidgets prefix and rebuilds (when upgrading a 0.2.0 root,
-  delete `_third_party/<toolchain>` once first),
+  delete `_third_party/<toolchain>` once first). The downloaded archives stay in
+  `<root>/_build/downloads` and are used again while their SHA256 matches the pin; a failed build
+  is run again up to three times in all, after 1 and 5 minutes (download servers answer 503 or 504
+  at times),
   `-BundleFfmpeg OFF` builds application packages without FFmpeg (bash: `--toolchain`, `--force`,
   `--bundle-ffmpeg`; `--toolchain` is `clang` or `appleclang`, the default on macOS).
 - The Vulkan validation layer is LunarG's prebuilt one from the Vulkan SDK 1.4.363.1 on all three
@@ -244,7 +247,7 @@ concurrency:                      # newer PR pushes cancel older runs; a running
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   ci:
-    uses: <owner>/dvv-build/.github/workflows/dvv-ci.yml@v0.3.1   # = the dvv-build line
+    uses: <owner>/dvv-build/.github/workflows/dvv-ci.yml@v0.3.2   # = the dvv-build line
     with:
       repo: dvv-gpu
 ```
@@ -270,8 +273,12 @@ The third-party prefix comes from two caches per toolchain `<tc>`:
 
 A prime job per OS (`prime-windows`, `prime-linux`, `prime-macos`) looks both keys up without
 downloading and stops when both exist; otherwise it restores what exists, bootstraps and saves what
-was missing. The build jobs of that OS and the tidy job (after `prime-linux`) start after it, restore
-both entries, never save, and take bootstrap's fast path. The lint job waits for no prime job.
+was missing. Such a prime job also restores a third cache, the downloaded archives
+(`<root>/_build/downloads`, keyed on the `URL` and `SHA256` lines of `deps/versions.cmake`, falling
+back to an older entry): an archive is used only when its SHA256 matches the pin, so it downloads
+only what the pins changed. The build jobs of that OS and the tidy job (after `prime-linux`) start
+after it, restore the wxWidgets and prefix entries, never save, and take bootstrap's fast path. The
+lint job waits for no prime job.
 
 ## Tests
 

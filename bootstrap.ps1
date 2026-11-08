@@ -140,21 +140,25 @@ if ($Force -and (Test-Path $wxPrefix)) {
     Remove-Item $wxPrefix -Recurse -Force
 }
 $configure = @('-S', (Join-Path $dvvBuild 'deps'), '-B', $build, "-DDVV_THIRD_PARTY_PREFIX=$prefix",
-    "-DDVV_BUNDLE_FFMPEG=$BundleFfmpeg", "-DCMAKE_PROJECT_INCLUDE=$((Join-Path $dvvBuild 'cmake/DvvEpBase.cmake').Replace('\', '/'))")
+    "-DDVV_BUNDLE_FFMPEG=$BundleFfmpeg",
+    "-DDVV_DOWNLOAD_DIR=$((Join-Path $root '_build/downloads').Replace('\', '/'))",
+    "-DCMAKE_PROJECT_INCLUDE=$((Join-Path $dvvBuild 'cmake/DvvEpBase.cmake').Replace('\', '/'))")
 switch ($Toolchain) {
     'msvc' { $configure += @('-G', 'Visual Studio 18 2026', '-A', 'x64') }
     'clang' { $configure += @('-G', 'Ninja', '-DCMAKE_C_COMPILER=clang-19', '-DCMAKE_CXX_COMPILER=clang++-19') }
 }
 Invoke-Native cmake $configure
 # CMake's downloader does not retry HTTP errors, and download servers (GitHub's among them) answer
-# 503 or 504 at times. A failed build is run again, up to three times in all: the steps that
-# finished are stamped, so only the failed ones (usually a download) run again.
+# 503 or 504 at times, sometimes for hours. A failed build is run again, up to three times in all,
+# after 1 and then 5 minutes: the steps that finished are stamped, so only the failed ones (usually
+# a download) run again. The archives stay in <root>/_build/downloads, which nothing removes.
 for ($attempt = 1; ; $attempt++) {
     & cmake --build $build --config Release --parallel
     if ($LASTEXITCODE -eq 0) { break }
     if ($attempt -ge 3) { throw "The third-party build failed $attempt times." }
-    Write-Warning "The third-party build failed (attempt $attempt of 3); running it again in 30 seconds."
-    Start-Sleep -Seconds 30
+    $pause = if ($attempt -eq 1) { 60 } else { 300 }
+    Write-Warning "The third-party build failed (attempt $attempt of 3); running it again in $pause seconds."
+    Start-Sleep -Seconds $pause
 }
 Set-Content -Path $stamp -Value $hash -NoNewline
 Write-Host "Third-party dependencies for $Toolchain installed."
