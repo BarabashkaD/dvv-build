@@ -6,13 +6,18 @@
 # exist next to it and the app (the folder above a libs/ root whose .gitmodules holds
 # libs/dvv-build) at the shared git hooks, copies dvv-build's repository-local commit identity
 # (git config --local; never the global one) to those without one,
-# and builds the third-party dependencies into <root>/_third_party/<toolchain> (build tree
-# <root>/_build/tp-<toolchain>). Missing repositories are skipped: tools/fetch-deps.cmake or
-# git submodule update --init clones them. Nothing machine-specific is written into any repository.
+# and builds the third-party dependencies into <root>/_third_party/<toolchain> and wxWidgets into
+# <root>/_third_party/<toolchain>-wx next to it (build tree <root>/_build/tp-<toolchain>). The
+# superbuild is skipped while the prefix stamp and the wxWidgets marker
+# (<toolchain>-wx/dvv-inputs.sha256, tools/separate-prefix-hash.cmake) are current; within it,
+# wxWidgets is skipped while its marker is. Missing repositories are skipped:
+# tools/fetch-deps.cmake or git submodule update --init clones them. Nothing machine-specific is
+# written into any repository.
 #
 # Usage: ./bootstrap.sh [--toolchain clang|appleclang] [--force] [--bundle-ffmpeg ON|OFF]
 # --toolchain: clang (Clang 19, Linux; the default there) or appleclang (/usr/bin/clang++, macOS
 # on Apple Silicon; the default there).
+# --force: rebuild every dependency, wxWidgets included (removes the build tree and <toolchain>-wx).
 # --bundle-ffmpeg (default ON): whether the rawreel packages ship custom_ffmpeg's LGPL libraries
 # (superbuild option DVV_BUNDLE_FFMPEG; user decision U4). FFmpeg is installed either way.
 set -eu
@@ -43,8 +48,8 @@ esac
 # Build prerequisites, checked before anything is configured or built. macOS (Apple Silicon, macOS
 # 27 SDK): Ninja and CMake; the compilers and SDK come with Xcode or its Command Line Tools, and
 # every library is built from the pinned sources or archives (nothing from Homebrew is linked).
-# Linux (spec §13.4): GTK 3 for wxWidgets, the window-system libraries of the Vulkan validation
-# layer, zlib and libpng.
+# Linux (spec §13.4): GTK 3 for wxWidgets (with its X11, XCB, XRandR and Wayland development
+# packages), zlib and libpng.
 superbuild_args=""
 if [ "$(uname -s)" = Darwin ]; then
     for program in ninja cmake; do
@@ -126,15 +131,38 @@ hash=$(cd "$dvv_build" && {
 } | $sha256 | cut -d' ' -f1)
 prefix="$root/_third_party/$toolchain"
 stamp="$prefix/versions.sha256"
-if [ "$force" -eq 0 ] && [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$hash" ]; then
+# wxWidgets has its own prefix (CI caches it apart, so it can be missing or older than the prefix):
+# the fast path also needs its marker to equal the hash the superbuild would write.
+wx_prefix="$prefix-wx"
+wx_hash=$(cmake -DNAME=wxWidgets "-DTOOLCHAIN=$toolchain" \
+    -P "$dvv_build/tools/separate-prefix-hash.cmake")
+wx_hash=${wx_hash#hash=}
+# Exactly 64 hex digits (a newline is not one, so extra output lines fail here too): an empty hash
+# would equal a missing marker.
+case $wx_hash in
+    *[!0-9a-f]* | '') wx_ok=0 ;;
+    *) wx_ok=1 ;;
+esac
+if [ "$wx_ok" -eq 0 ] || [ "${#wx_hash}" -ne 64 ]; then
+    echo "tools/separate-prefix-hash.cmake did not print 'hash=<64 hex digits>': '$wx_hash'" >&2
+    exit 1
+fi
+wx_marker=""
+if [ -f "$wx_prefix/dvv-inputs.sha256" ]; then wx_marker=$(cat "$wx_prefix/dvv-inputs.sha256"); fi
+if [ "$force" -eq 0 ] && [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$hash" ] &&
+    [ "$wx_marker" = "$wx_hash" ]; then
     echo "Third-party dependencies for $toolchain are up to date."
     exit 0
 fi
 build="$root/_build/tp-$toolchain"
 # The build tree holds the step stamps of every dependency: reusing it after --force or a deleted
-# prefix would skip every step and install nothing.
+# prefix would skip every step and install nothing. (A wxWidgets marker that does not match makes
+# the superbuild remove wxWidgets' stamps itself.)
 if [ "$force" -eq 1 ] || [ ! -f "$stamp" ]; then
     rm -rf "$build"
+fi
+if [ "$force" -eq 1 ]; then
+    rm -rf "$wx_prefix"
 fi
 cmake -S "$dvv_build/deps" -B "$build" -G Ninja "-DCMAKE_C_COMPILER=$c_compiler" \
     "-DCMAKE_CXX_COMPILER=$compiler" "-DDVV_THIRD_PARTY_PREFIX=$prefix" \

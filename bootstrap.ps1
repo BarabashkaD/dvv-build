@@ -9,13 +9,18 @@
     exist next to it and the app (the folder above a libs/ root whose .gitmodules holds
     libs/dvv-build) at the shared git hooks, copies dvv-build's repository-local commit identity
     (git config --local; never the global one) to those without one,
-    and builds the third-party dependencies into <root>/_third_party/<toolchain> (build tree
-    <root>/_build/tp-<toolchain>). Missing repositories are skipped: tools/fetch-deps.cmake or
-    git submodule update --init clones them. Nothing machine-specific is written into any repository.
+    and builds the third-party dependencies into <root>/_third_party/<toolchain> and wxWidgets
+    into <root>/_third_party/<toolchain>-wx next to it (build tree <root>/_build/tp-<toolchain>).
+    The superbuild is skipped while the prefix stamp and the wxWidgets marker
+    (<toolchain>-wx/dvv-inputs.sha256, tools/separate-prefix-hash.cmake) are current; within it,
+    wxWidgets is skipped while its marker is. Missing repositories are skipped:
+    tools/fetch-deps.cmake or git submodule update --init clones them. Nothing machine-specific is
+    written into any repository.
 .PARAMETER Toolchain
     msvc (default) or clang.
 .PARAMETER Force
-    Rebuild the third-party dependencies even if they are up to date.
+    Rebuild the third-party dependencies, wxWidgets included, even if they are up to date (removes
+    the build tree and <toolchain>-wx).
 .PARAMETER BundleFfmpeg
     ON (default) or OFF: whether the rawreel packages ship custom_ffmpeg's LGPL libraries (superbuild
     option DVV_BUNDLE_FFMPEG; user decision U4). FFmpeg is installed for development and tests
@@ -30,6 +35,8 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $BundleFfmpeg = $BundleFfmpeg.ToUpperInvariant()
+# ValidateSet ignores case; the toolchain names a folder and is part of the wxWidgets marker.
+$Toolchain = $Toolchain.ToLowerInvariant()
 
 # The deepest path the builds create below the dvv root, counting the separator after the root: an
 # application's vs2026-asan tree with DVV_TEST_DEPENDENCIES goes 189 characters deep, plus 1 for the
@@ -102,7 +109,19 @@ $rootTooLong = $IsWindows -and $root.Length + $DVV_PATH_DEPTH -gt $maxPath
 $rootMessage = "The dvv root $root is $($root.Length) characters long; at most $($maxPath - $DVV_PATH_DEPTH) " +
     "fit the Windows path limit ($maxPath, of which the builds use up to $DVV_PATH_DEPTH below the " +
     "root). Clone to a shorter path."
-if (-not $Force -and (Test-Path $stamp) -and ((Get-Content $stamp -Raw).Trim() -eq $hash)) {
+# wxWidgets has its own prefix (CI caches it apart, so it can be missing or older than the prefix):
+# the fast path also needs its marker to equal the hash the superbuild would write.
+$wxPrefix = "$prefix-wx"
+$wxHashScript = Join-Path $dvvBuild 'tools/separate-prefix-hash.cmake'
+$wxHashOutput = (& cmake -DNAME=wxWidgets "-DTOOLCHAIN=$Toolchain" -P $wxHashScript) -join "`n"
+if ($LASTEXITCODE -ne 0 -or $wxHashOutput -notmatch '(?m)^hash=([0-9a-f]{64})$') {
+    throw "tools/separate-prefix-hash.cmake failed ($LASTEXITCODE): $wxHashOutput"
+}
+$wxHash = $Matches[1]
+$wxMarker = Join-Path $wxPrefix 'dvv-inputs.sha256'
+$wxCurrent = (Test-Path $wxMarker) -and ("$(Get-Content $wxMarker -Raw)".Trim() -eq $wxHash)
+$prefixCurrent = (Test-Path $stamp) -and ("$(Get-Content $stamp -Raw)".Trim() -eq $hash)
+if (-not $Force -and $prefixCurrent -and $wxCurrent) {
     # A valid stamp (for example a copied prefix) needs no superbuild, but the preset builds still
     # create deep trees below the root.
     if ($rootTooLong) { Write-Warning $rootMessage }
@@ -113,8 +132,12 @@ if ($rootTooLong) { throw $rootMessage }
 $build = Join-Path $root "_build/tp-$Toolchain"
 # The build tree holds the step stamps of every dependency: reusing it after -Force or a deleted
 # prefix would skip every step and install nothing.
+# (A wxWidgets marker that does not match makes the superbuild remove wxWidgets' stamps itself.)
 if (($Force -or -not (Test-Path $stamp)) -and (Test-Path $build)) {
     Remove-Item $build -Recurse -Force
+}
+if ($Force -and (Test-Path $wxPrefix)) {
+    Remove-Item $wxPrefix -Recurse -Force
 }
 $configure = @('-S', (Join-Path $dvvBuild 'deps'), '-B', $build, "-DDVV_THIRD_PARTY_PREFIX=$prefix",
     "-DDVV_BUNDLE_FFMPEG=$BundleFfmpeg", "-DCMAKE_PROJECT_INCLUDE=$((Join-Path $dvvBuild 'cmake/DvvEpBase.cmake').Replace('\', '/'))")

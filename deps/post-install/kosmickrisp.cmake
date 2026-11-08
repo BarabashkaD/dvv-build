@@ -7,6 +7,10 @@
 #   lib/libvulkan_kosmickrisp.dylib                  the KosmicKrisp driver,
 #   share/vulkan/icd.d/libkosmickrisp_icd.json       its manifest, library_path relative to it,
 #   bin/vulkaninfo                                   the test tool (entry vulkaninfo),
+#   lib/libVkLayer_khronos_validation.dylib          the validation layer (entry
+#                                                    Vulkan-ValidationLayers), universal and whole,
+#   share/vulkan/explicit_layer.d/VkLayer_khronos_validation.json
+#                                                    its manifest, library_path relative to it,
 # and replaces SOURCE_DIR's content with the SDK's Licenses/LICENSE.txt and VERSIONS.txt, which the
 # notices of kosmickrisp and vulkaninfo read. The installer and the installed SDK (2.6 GB) are
 # removed. When the installer is gone, the extract step has not run again, so the files installed
@@ -20,9 +24,12 @@ endforeach()
 
 set(driver libvulkan_kosmickrisp.dylib)
 set(manifest libkosmickrisp_icd.json)
+set(layer libVkLayer_khronos_validation.dylib)
+set(layer_manifest VkLayer_khronos_validation.json)
 set(outputs "${PREFIX}/lib/${driver}" "${PREFIX}/share/vulkan/icd.d/${manifest}"
-            "${PREFIX}/bin/vulkaninfo" "${SOURCE_DIR}/Licenses/LICENSE.txt"
-            "${SOURCE_DIR}/VERSIONS.txt")
+            "${PREFIX}/bin/vulkaninfo" "${PREFIX}/lib/${layer}"
+            "${PREFIX}/share/vulkan/explicit_layer.d/${layer_manifest}"
+            "${SOURCE_DIR}/Licenses/LICENSE.txt" "${SOURCE_DIR}/VERSIONS.txt")
 
 file(GLOB installer LIST_DIRECTORIES false "${SOURCE_DIR}/Contents/MacOS/vulkansdk-macOS-*")
 list(LENGTH installer count)
@@ -56,7 +63,9 @@ endif()
 
 set(sdk "${root}/macOS")
 foreach(file IN ITEMS "${sdk}/lib/${driver}" "${sdk}/share/vulkan/icd.d/${manifest}"
-                      "${sdk}/bin/vulkaninfo" "${root}/Licenses/LICENSE.txt" "${root}/VERSIONS.txt")
+                      "${sdk}/bin/vulkaninfo" "${sdk}/lib/${layer}"
+                      "${sdk}/share/vulkan/explicit_layer.d/${layer_manifest}"
+                      "${root}/Licenses/LICENSE.txt" "${root}/VERSIONS.txt")
     if(NOT EXISTS "${file}")
         message(FATAL_ERROR "kosmickrisp post-install: the installed SDK has no ${file}")
     endif()
@@ -71,6 +80,16 @@ if(NOT text MATCHES "\"library_path\"[ \t]*:[ \t]*\"[^\"]*\"")
 endif()
 string(REPLACE "${CMAKE_MATCH_0}" "\"library_path\": \"../../../lib/${driver}\"" text "${text}")
 file(WRITE "${PREFIX}/share/vulkan/icd.d/${manifest}" "${text}")
+
+# The validation layer is never shipped: it stays universal with LunarG's signature (no lipo).
+file(COPY "${sdk}/lib/${layer}" DESTINATION "${PREFIX}/lib")
+# The manifest is <prefix>/share/vulkan/explicit_layer.d/<layer manifest>.
+file(READ "${sdk}/share/vulkan/explicit_layer.d/${layer_manifest}" text)
+if(NOT text MATCHES "\"library_path\"[ \t]*:[ \t]*\"[^\"]*\"")
+    message(FATAL_ERROR "kosmickrisp post-install: no library_path in ${layer_manifest}")
+endif()
+string(REPLACE "${CMAKE_MATCH_0}" "\"library_path\": \"../../../lib/${layer}\"" text "${text}")
+file(WRITE "${PREFIX}/share/vulkan/explicit_layer.d/${layer_manifest}" "${text}")
 
 file(REMOVE_RECURSE "${SOURCE_DIR}/Contents")
 file(COPY "${root}/Licenses/LICENSE.txt" DESTINATION "${SOURCE_DIR}/Licenses")

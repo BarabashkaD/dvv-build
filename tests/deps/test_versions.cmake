@@ -31,13 +31,12 @@ if(DEFINED PLATFORM)
             message(FATAL_ERROR "${name} for ${PLATFORM}: SHA256 '${SHA256}' is not 64 digits")
         endif()
     endforeach()
-    # macOS (spec U-MAC2, U-MAC10): the loader is built from source, KosmicKrisp and vulkaninfo come
-    # from the LunarG SDK.
+    # macOS (spec U-MAC2, U-MAC10): the loader is built from source, KosmicKrisp, vulkaninfo and the
+    # validation layer come from the LunarG SDK.
     if(PLATFORM STREQUAL "Darwin")
         set(expected_names nlohmann_json doctest Vulkan-Headers VulkanMemoryAllocator vk-bootstrap
-                           slang Vulkan-Utility-Libraries SPIRV-Headers SPIRV-Tools
-                           Vulkan-ValidationLayers Vulkan-Loader kosmickrisp vulkaninfo wxWidgets
-                           custom_ffmpeg)
+                           slang Vulkan-Loader kosmickrisp vulkaninfo Vulkan-ValidationLayers
+                           wxWidgets custom_ffmpeg)
         if(NOT names STREQUAL expected_names)
             message(FATAL_ERROR "names for Darwin: '${names}', expected '${expected_names}'")
         endif()
@@ -131,6 +130,80 @@ if(DEFINED PLATFORM)
                 message(FATAL_ERROR "mesa/COPYRIGHTS.txt lacks '${expected}'")
             endif()
         endforeach()
+    endif()
+    # The validation layer is LunarG's prebuilt from the SDK 1.4.363.1 on every platform (U-CI1); on
+    # macOS it shares kosmickrisp's archive, whose post-install step installs it. Its licence texts
+    # are supplements: the SDK archives carry only LunarG's statement (Linux, macOS) or nothing
+    # (Windows, where the post-install step keeps the layer's LICENSE.txt). Only the Windows build
+    # embeds mimalloc. The source build's own dependencies are gone.
+    foreach(platform IN LISTS DVV_THIRD_PARTY_PLATFORMS)
+        get_property(declared GLOBAL PROPERTY "DVV_THIRD_PARTY_DECLARED_${platform}")
+        foreach(name IN ITEMS SPIRV-Tools SPIRV-Headers Vulkan-Utility-Libraries)
+            if(name IN_LIST declared)
+                message(FATAL_ERROR "${name} is declared for ${platform}")
+            endif()
+        endforeach()
+    endforeach()
+    set(layer_supplements vulkan-validationlayers/LICENSE.txt
+        vulkan-validationlayers/LICENSES/Apache-2.0.txt
+        vulkan-validationlayers/LICENSES/BSD-2-Clause.txt
+        vulkan-validationlayers/LICENSES/BSL-1.0.txt
+        vulkan-validationlayers/LICENSES/LLVM-exception.txt
+        vulkan-validationlayers/LICENSES/MIT.txt spirv-tools/LICENSE spirv-headers/LICENSE)
+    set(layer_post_install "/deps/post-install/Vulkan-ValidationLayers\\.cmake$")
+    set(layer_shared "")
+    set(layer_depends "")
+    if(PLATFORM STREQUAL "Linux")
+        set(layer_url https://sdk.lunarg.com/sdk/download/1.4.363.1/linux/vulkan_sdk.tar.xz)
+        set(layer_sha256 b7867d8ca658563813af666f34b93db87f1b1c7d9d69d97e924c210c7ba33eb8)
+        set(layer_licence_files LICENSE.txt)
+    elseif(PLATFORM STREQUAL "Windows")
+        set(layer_url https://sdk.lunarg.com/sdk/download/1.4.363.1/windows/vulkan_sdk.exe)
+        set(layer_sha256 c02932bd9a968b22d404536108adaacac908c081cd6b0113f5bfefc523dd0a6a)
+        set(layer_licence_files vulkan-validationlayers/LICENSE.txt)
+        list(REMOVE_AT layer_supplements 0)
+        list(APPEND layer_supplements mimalloc/LICENSE)
+    else()
+        set(layer_url https://sdk.lunarg.com/sdk/download/1.4.363.1/mac/vulkan_sdk.zip)
+        set(layer_sha256 a65c707cf0a32bf8c2ca6b9af1985b7af61dbadfc19b352dae51a323f3a547a6)
+        set(layer_licence_files Licenses/LICENSE.txt)
+        set(layer_post_install "^$")
+        set(layer_shared kosmickrisp)
+        set(layer_depends kosmickrisp)
+    endif()
+    foreach(entry IN ITEMS "PREBUILT|TRUE" "VERSION|1.4.363.1" "URL|${layer_url}"
+                           "SHA256|${layer_sha256}" "LINKAGE|runtime" "SHIPPED|FALSE"
+                           "SPDX|Apache-2.0 AND BSD-2-Clause AND BSL-1.0 AND MIT"
+                           "LICENSE_FILES|${layer_licence_files}" "DEPENDS|${layer_depends}")
+        string(FIND "${entry}" "|" bar)
+        string(SUBSTRING "${entry}" 0 ${bar} key)
+        math(EXPR bar "${bar} + 1")
+        string(SUBSTRING "${entry}" ${bar} -1 expected)
+        get_property(value GLOBAL PROPERTY "DVV_THIRD_PARTY_Vulkan-ValidationLayers_${key}")
+        if(NOT "${value}" STREQUAL "${expected}")
+            message(FATAL_ERROR "Vulkan-ValidationLayers ${key} for ${PLATFORM}: '${value}', "
+                                "expected '${expected}'")
+        endif()
+    endforeach()
+    get_property(value GLOBAL PROPERTY DVV_THIRD_PARTY_Vulkan-ValidationLayers_POST_INSTALL)
+    if(NOT value MATCHES "${layer_post_install}")
+        message(FATAL_ERROR "Vulkan-ValidationLayers POST_INSTALL for ${PLATFORM}: '${value}'")
+    endif()
+    dvv_third_party_shared_archive(Vulkan-ValidationLayers shared)
+    if(NOT shared STREQUAL layer_shared)
+        message(FATAL_ERROR "Vulkan-ValidationLayers for ${PLATFORM} shares the archive of "
+                            "'${shared}', expected '${layer_shared}'")
+    endif()
+    get_property(supplements GLOBAL PROPERTY DVV_THIRD_PARTY_Vulkan-ValidationLayers_SUPPLEMENTS)
+    set(supplied "")
+    foreach(supplement IN LISTS supplements)
+        string(REPLACE "|" ";" parts "${supplement}")
+        list(GET parts 2 shown)
+        list(APPEND supplied "${shown}")
+    endforeach()
+    if(NOT supplied STREQUAL layer_supplements)
+        message(FATAL_ERROR "Vulkan-ValidationLayers licence supplements for ${PLATFORM}: "
+                            "'${supplied}', expected '${layer_supplements}'")
     endif()
     # The entries whose code ships in a rawreel package (M4 design D19); custom_ffmpeg only when
     # bundled (user decision U4).

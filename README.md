@@ -32,6 +32,7 @@ the repositories:
   dvv-build/                  this repository
   dvv-<x>/ ...                the dvv libraries (a library alone: the library and its dependencies)
   _third_party/<toolchain>/   installed third-party dependencies (created by bootstrap)
+  _third_party/<toolchain>-wx/  wxWidgets, apart so that CI caches it on its own (by bootstrap)
   _build/<repo>/<preset>/     build trees (created by the CMake presets)
   _build/tp-<toolchain>/      the superbuild tree (created by bootstrap)
 ```
@@ -54,7 +55,7 @@ Each library and application lists its dvv dependencies in `dvv-deps.txt`, in de
 
 ```text
 # dvv dependencies: <repository> <minimum version>, dependency order (read by dvv-build).
-dvv-build 0.2.0
+dvv-build 0.3.0
 dvv-base 0.1.0
 dvv-platform 0.1.0
 ```
@@ -85,6 +86,8 @@ dvv-platform 0.1.0
 - Windows: Visual Studio 2026 (C++ workload), PowerShell 7, Git, Python 3; for the GPU tests a
   driver with Vulkan 1.4. The tools (CMake 4.3, Ninja, clang-format and clang-tidy 19) are
   installed with pip from dvv-build's `tools/requirements.txt` right after cloning it (see below).
+  Configuring the third-party superbuild needs CMake 4.3.2 or newer on Windows (it reads LunarG's
+  Vulkan SDK installer); the pinned CMake qualifies.
 - Linux (Ubuntu 24.04, also in WSL 2): Clang 19 with libstdc++ 14 is the only supported toolchain
   (no GCC, no libc++; `DvvCompilerOptions.cmake` checks it). Git, Python 3 and
 
@@ -107,9 +110,10 @@ dvv-platform 0.1.0
 - macOS 27 or newer on Apple Silicon: Xcode 27 (its Apple Clang and libc++ are the only supported
   toolchain; `DvvCompilerOptions.cmake` checks it), Homebrew and Git. `brew install ninja` and a
   Python 3 for the tools. The GPU tests run on KosmicKrisp (Mesa's Vulkan driver on Metal), which
-  bootstrap builds into the prefix together with the Vulkan loader and `vulkaninfo`; no Vulkan SDK
-  install is needed. The tools (CMake 4, clang-format and clang-tidy 19) come from pip as on Linux,
-  into a virtual environment that is active in every shell that builds.
+  bootstrap installs into the prefix together with the Vulkan loader, `vulkaninfo` and the
+  validation layer; no Vulkan SDK install is needed. The tools (CMake 4, clang-format and
+  clang-tidy 19) come from pip as on Linux, into a virtual environment that is active in every
+  shell that builds.
 
 ## Building a library alone
 
@@ -117,7 +121,7 @@ dvv-platform 0.1.0
 
 ```powershell
 git clone <base>/dvv-gpu
-git clone --branch v0.2.0 <base>/dvv-build      # the dvv-build line of dvv-gpu/dvv-deps.txt
+git clone --branch v0.3.0 <base>/dvv-build      # the dvv-build line of dvv-gpu/dvv-deps.txt
 git -C dvv-build config user.name <GitHub handle>
 git -C dvv-build config user.email <GitHub noreply e-mail>
 python -m pip install -r dvv-build/tools/requirements.txt
@@ -141,10 +145,19 @@ tests Release; also `ninja-macos-asan`; there is no ThreadSanitizer preset).
 - `bootstrap` gives dvv-build, the libraries next to it and the app (when the root is `<app>/libs`)
   the shared git hooks and **dvv-build's repository-local commit identity** (only that one, never
   the global one, and only to repositories without their own), so set it in dvv-build first. It
-  then builds the third-party dependencies into `<root>/_third_party/<toolchain>` (the first run
-  takes 10 to 20 minutes; later runs say "up to date"). `-Toolchain msvc|clang`, `-Force` rebuilds,
+  then builds the third-party dependencies into `<root>/_third_party/<toolchain>` and wxWidgets into
+  `<root>/_third_party/<toolchain>-wx` (the first run takes several minutes; later runs say "up to
+  date" while the prefix stamp and the wxWidgets marker `dvv-inputs.sha256` are current; the
+  superbuild skips wxWidgets while its marker matches and removes the root-level
+  `lib/cmake/wxWidgets*` package that dvv-build 0.2.0 installed). `-Toolchain msvc|clang`, `-Force`
+  removes the build tree and the wxWidgets prefix and rebuilds (when upgrading a 0.2.0 root,
+  delete `_third_party/<toolchain>` once first),
   `-BundleFfmpeg OFF` builds application packages without FFmpeg (bash: `--toolchain`, `--force`,
   `--bundle-ffmpeg`; `--toolchain` is `clang` or `appleclang`, the default on macOS).
+- The Vulkan validation layer is LunarG's prebuilt one from the Vulkan SDK 1.4.363.1 on all three
+  systems; SPIRV-Headers, SPIRV-Tools and Vulkan-Utility-Libraries are no longer built. The presets'
+  `CMAKE_PREFIX_PATH` holds both folders, `<root>/_third_party/<toolchain>;<root>/_third_party/<toolchain>-wx`;
+  a consumer that sets its own `CMAKE_PREFIX_PATH` must add the `-wx` sibling.
 - custom_ffmpeg's LGPL shared release is installed into `_third_party/<toolchain>/custom_ffmpeg`.
   FFmpeg is never linked; CMake projects find it with `find_package(dvv_ffmpeg_sdk CONFIG REQUIRED)`.
   The prefix holds `THIRD_PARTY_NOTICES.txt` (what packages ship) and `THIRD_PARTY_NOTICES-all.txt`
@@ -215,15 +228,15 @@ version still meets the minimum; an existing folder must be checked out at that 
   `check-pins` (app mode) rejects an override in the application's `dvv-deps.txt` and in a pinned
   library's `dvv-deps.txt`.
 
-While an override is present, the lint job runs the privacy lint, clang-format and clang-tidy as
-usual and fails at its last step, `check-pins`, so the pull request cannot go green: tag the
-dependency, raise the minimum and remove the override ("back on tags before merge").
+While an override is present, the lint job runs the privacy lint and clang-format as usual and fails
+at its last step, `check-pins`, so the pull request cannot go green: tag the dependency, raise the
+minimum and remove the override ("back on tags before merge").
 
 ## CI
 
 `.github/workflows/dvv-ci.yml` is the reusable workflow (Windows MSVC, Linux Clang and macOS Apple Clang
-builds with AddressSanitizer variants, Linux also ThreadSanitizer, and a lint job). On Windows, Debug
-and Release run as separate jobs (`windows-msvc`, `windows-msvc-release`):
+builds with AddressSanitizer variants, Linux also ThreadSanitizer, a lint job and a clang-tidy job). On
+Windows, Debug and Release run as separate jobs (`windows-msvc`, `windows-msvc-release`):
 
 ```yaml
 concurrency:                      # newer PR pushes cancel older runs; a running main run finishes
@@ -231,27 +244,40 @@ concurrency:                      # newer PR pushes cancel older runs; a running
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   ci:
-    uses: <owner>/dvv-build/.github/workflows/dvv-ci.yml@v0.2.0   # = the dvv-build line
+    uses: <owner>/dvv-build/.github/workflows/dvv-ci.yml@v0.3.0   # = the dvv-build line
     with:
       repo: dvv-gpu
 ```
 
 - Library (lib layout): reads the `dvv-build` line, checks out dvv-build at that tag, runs
   `fetch-deps` with `DVV_GIT_BASE_URL` = the caller's account, so the libraries' minimum versions
-  are tested. Lint: privacy lint, clang-format, clang-tidy, then `check-pins` (lib mode). A fork needs
+  are tested. Lint: privacy lint, clang-format, then `check-pins` (lib mode); tidy: clang-tidy on the
+  Linux Clang build. A fork needs
   the dvv repositories under its own account.
 - Application: `app: true` (submodules checked out recursively; `check-pins` in app mode), and
   `test-dependencies: true` to run every library's tests at the pins.
 - dvv-build's own `ci.yml` runs the script tests on Windows and Linux (`tools`) and the reusable
   workflow on dvv-build itself (`self`).
 
-The build jobs restore the third-party prefix from a cache keyed on `deps/**`,
-`cmake/DvvThirdParty.cmake` and `cmake/DvvSpdx.cmake`, and save it right after bootstrap.
+The third-party prefix comes from two caches per toolchain `<tc>`:
+
+- wxWidgets, `<root>/_third_party/<tc>-wx`, keyed on the first 16 hex digits of its inputs marker
+  (`tools/separate-prefix-hash.cmake`) and of a hash of the compiler version (Linux `clang-19
+  --version`; Windows the Visual Studio build version and the newest MSVC tools folder; macOS the Xcode
+  and SDK versions);
+- the rest, `<root>/_third_party/<tc>`, keyed on `deps/**`, `cmake/DvvThirdParty.cmake` and
+  `cmake/DvvSpdx.cmake` (the inputs of bootstrap's up-to-date stamp).
+
+A prime job per OS (`prime-windows`, `prime-linux`, `prime-macos`) looks both keys up without
+downloading and stops when both exist; otherwise it restores what exists, bootstraps and saves what
+was missing. The build jobs of that OS and the tidy job (after `prime-linux`) start after it, restore
+both entries, never save, and take bootstrap's fast path. The lint job waits for no prime job.
 
 ## Tests
 
 The GPU tests (label `gpu`) need a Vulkan 1.4 device; without one they exit with 77 and CTest
-reports them as skipped. CTest uses the validation layer built by bootstrap, and every GPU test
+reports them as skipped. CTest uses the validation layer that bootstrap installs into the prefix
+(LunarG's prebuilt layer from the Vulkan SDK 1.4.363.1, not a source build), and every GPU test
 fails on a validation message. Display tests (label `display`, and `gui` for application
 self-tests) need a desktop. Environment settings:
 
@@ -270,7 +296,7 @@ Test tiers (Windows, PowerShell 7; `<root>` is the folder that holds the changed
 | T0 | after each change | the changed repository: `sanity`, or only the relevant tests | `pwsh <root>/dvv-build/tools/sanity.ps1 -Repo <repo>`; for the relevant tests `ctest --preset vs2026 -R <regex>` in a built tree, or `pwsh <root>/dvv-build/tools/sanity.ps1 -Repo <repo> -Tests <regex>` (builds first) |
 | T1 | before each commit | `small` (all but label `package`) in the changed repository and the application, `sanity` in the repositories between them; clang-format on the changed files; the privacy lint | `pwsh <root>/dvv-build/tools/sanity.ps1 -Repo <repo> -Downstream -Small`, then `cmake "-DREPO=<repo>" -DMODE=commits -P <root>/dvv-build/tools/privacy-lint.cmake` |
 | T2 | when a task is mostly done, and at milestone ends | the full workflows: Windows, Linux with sanitizers, clang-tidy; a package dry run for packaging or release changes | `cmake --workflow --preset vs2026` (Debug and Release) and `vs2026-asan`; on Linux `ninja-clang`, `ninja-clang-asan`, `ninja-clang-tsan` |
-| CI | every push and pull request | the full matrix and the lint job | `.github/workflows/dvv-ci.yml` (see CI) |
+| CI | every push and pull request | the prime jobs, the full matrix and the lint and tidy jobs | `.github/workflows/dvv-ci.yml` (see CI) |
 
 For T0, the test names select the area: `-R "^dvv_build\."` (dvv-build), `-R "\.compile_fail\."`
 (factory and registry changes) or a library's `dvv_<x>.` prefix. In a built tree,

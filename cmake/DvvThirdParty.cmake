@@ -3,7 +3,8 @@
 # dvv_third_party(<name> VERSION <v> URL <url> SHA256 <hash> SPDX <expression>
 #                 LINKAGE static|runtime|tool LICENSE_FILES <path or glob in archive>...
 #                 [ONLY_ON Windows|Linux|Darwin] [DEPENDS <name>...] [CONFIGS Debug|Release...]
-#                 [PREBUILT | CMAKE_ARGS <args>...] [POST_INSTALL <script>] [SHIPPED])
+#                 [PREBUILT | CMAKE_ARGS <args>...] [POST_INSTALL <script>] [SHIPPED]
+#                 [SEPARATE_PREFIX <suffix>])
 # Records the dependency in global properties and fails configuration when its SPDX expression is
 # not allowed for its linkage. Every declaration passes the licence gate on every platform; ONLY_ON
 # only decides where it is built.
@@ -22,6 +23,12 @@
 #   POST_INSTALL   CMake script, relative to the declaring file, run after the install as
 #                  cmake -DSOURCE_DIR=<extracted archive> -DPREFIX=<install prefix>
 #                  -DBINARY_DIR=<the entry's build directory> -P <script>.
+#   SEPARATE_PREFIX <suffix>
+#                  the entry installs into <prefix>-<suffix> (lower-case letters and digits), a
+#                  folder next to the prefix that CI caches on its own, instead of the prefix;
+#                  its dependencies are still found in the prefix. The superbuild marks it with
+#                  dvv_third_party_separate_prefix_hash() and skips the entry while the marker
+#                  matches. Not with PREBUILT.
 include_guard(GLOBAL)
 include("${CMAKE_CURRENT_LIST_DIR}/DvvSpdx.cmake")
 
@@ -29,7 +36,7 @@ set(DVV_THIRD_PARTY_PLATFORMS Windows Linux Darwin)
 
 function(dvv_third_party name)
     cmake_parse_arguments(PARSE_ARGV 1 arg "PREBUILT;SHIPPED"
-                          "VERSION;URL;SHA256;SPDX;LINKAGE;ONLY_ON;POST_INSTALL"
+                          "VERSION;URL;SHA256;SPDX;LINKAGE;ONLY_ON;POST_INSTALL;SEPARATE_PREFIX"
                           "LICENSE_FILES;DEPENDS;CMAKE_ARGS;CONFIGS")
     foreach(required IN ITEMS VERSION URL SHA256 SPDX LINKAGE LICENSE_FILES)
         if(NOT arg_${required})
@@ -45,6 +52,13 @@ function(dvv_third_party name)
     string(LENGTH "${arg_SHA256}" hash_length)
     if(NOT hash_length EQUAL 64)
         message(FATAL_ERROR "dvv_third_party(${name}): SHA256 must have 64 hex digits")
+    endif()
+    if(DEFINED arg_SEPARATE_PREFIX AND NOT arg_SEPARATE_PREFIX MATCHES "^[a-z0-9]+$")
+        message(FATAL_ERROR "dvv_third_party(${name}): SEPARATE_PREFIX must match ^[a-z0-9]+$")
+    endif()
+    if(arg_PREBUILT AND DEFINED arg_SEPARATE_PREFIX)
+        message(FATAL_ERROR "dvv_third_party(${name}): SEPARATE_PREFIX is not for PREBUILT (it "
+                            "moves an install, and a PREBUILT entry has none)")
     endif()
     if(arg_PREBUILT AND arg_CMAKE_ARGS)
         message(FATAL_ERROR "dvv_third_party(${name}): PREBUILT takes no CMAKE_ARGS")
@@ -112,7 +126,7 @@ function(dvv_third_party name)
     endif()
     set_property(GLOBAL APPEND PROPERTY DVV_THIRD_PARTY_NAMES "${name}")
     foreach(key IN ITEMS VERSION URL SHA256 SPDX LINKAGE LICENSE_FILES DEPENDS PREBUILT CMAKE_ARGS
-                         POST_INSTALL CONFIGS SHIPPED)
+                         POST_INSTALL CONFIGS SHIPPED SEPARATE_PREFIX)
         set_property(GLOBAL PROPERTY "DVV_THIRD_PARTY_${name}_${key}" "${arg_${key}}")
     endforeach()
 endfunction()
@@ -294,4 +308,38 @@ function(dvv_third_party_build_configs name multi_config out_var)
                             "generator (Visual Studio); a single-config generator builds Release only")
     endif()
     set(${out_var} ${configs} PARENT_SCOPE)
+endfunction()
+
+# Bumped whenever the code that builds an entry with SEPARATE_PREFIX changes what it installs, so
+# every cached separate prefix is rebuilt: deps/CMakeLists.txt, dvv_third_party_common_args(),
+# deps/separate-prefix-finish.cmake, cmake/DvvEpBase.cmake and the superbuild arguments of
+# bootstrap.sh and bootstrap.ps1 (for example the macOS deployment target). Neither the marker nor
+# the CI cache key sees those files. Unrelated edits of them leave it alone.
+set(DVV_SEPARATE_PREFIX_RECIPE_REV 1)
+
+# dvv_third_party_separate_prefix_hash(<name> <toolchain> <out_var>): the marker of entry <name>'s
+# separate prefix (SEPARATE_PREFIX) on this platform, built with <toolchain> (the prefix folder's
+# name: msvc, clang or appleclang). The SHA256 of one line "<KEY>=<value>" per key: the entry's
+# VERSION, URL, SHA256, LICENSE_FILES, CONFIGS and CMAKE_ARGS (as CMake lists), then
+# RECIPE_REV=<DVV_SEPARATE_PREFIX_RECIPE_REV> and TOOLCHAIN=<toolchain>. SPDX only changes the
+# notices, which are written from the entry, so it is not part of it. The compiler is not either:
+# the CI cache key adds it. tools/separate-prefix-hash.cmake prints it for bootstrap and CI.
+function(dvv_third_party_separate_prefix_hash name toolchain out_var)
+    get_property(suffix GLOBAL PROPERTY "DVV_THIRD_PARTY_${name}_SEPARATE_PREFIX")
+    if(suffix STREQUAL "")
+        message(FATAL_ERROR "dvv_third_party_separate_prefix_hash(${name}): ${name} has no "
+                            "SEPARATE_PREFIX here (${CMAKE_SYSTEM_NAME})")
+    endif()
+    if(NOT toolchain MATCHES "^[A-Za-z0-9_.-]+$")
+        message(FATAL_ERROR "dvv_third_party_separate_prefix_hash(${name}): the toolchain must be "
+                            "a folder name, not '${toolchain}'")
+    endif()
+    set(text "")
+    foreach(key IN ITEMS VERSION URL SHA256 LICENSE_FILES CONFIGS CMAKE_ARGS)
+        get_property(value GLOBAL PROPERTY "DVV_THIRD_PARTY_${name}_${key}")
+        string(APPEND text "${key}=${value}\n")
+    endforeach()
+    string(APPEND text "RECIPE_REV=${DVV_SEPARATE_PREFIX_RECIPE_REV}\nTOOLCHAIN=${toolchain}\n")
+    string(SHA256 hash "${text}")
+    set(${out_var} "${hash}" PARENT_SCOPE)
 endfunction()
