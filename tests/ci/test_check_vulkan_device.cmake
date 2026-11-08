@@ -21,6 +21,7 @@ function(check expect_failure expected_text)
         message(FATAL_ERROR "FAIL: output of check-vulkan-device ${ARGN} lacks '${expected_text}':\n"
                             "${out}${err}")
     endif()
+    set(last_output "${output}" PARENT_SCOPE)
 endfunction()
 
 # summary(<file name> <device block>...) writes a summary in vulkaninfo's layout: instance and layer
@@ -89,11 +90,30 @@ if(CMAKE_HOST_APPLE)
 cat '${WORK_DIR}/lavapipe.txt'
 ")
     file(CHMOD "${prefix}/bin/vulkaninfo" PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE)
-    check(1 "check-vulkan-device: no KosmicKrisp manifest .*libkosmickrisp_icd\\.json; run bootstrap"
+    check(1 "check-vulkan-device: no driver manifest .*libkosmickrisp_icd\\.json; run bootstrap"
           ${host_args})
     file(WRITE "${manifest}" "{}\n")
-    check(0 "VK_DRIVER_FILES=${manifest} DYLD_LIBRARY_PATH=${prefix}/lib .*passed: apiVersion 1.4.318"
+    # The prefix's loader is found through the fallback path, which leaves the library paths of
+    # another driver (lavapipe's Homebrew dependencies) alone.
+    check(0 "VK_DRIVER_FILES=${manifest} DYLD_FALLBACK_LIBRARY_PATH=${prefix}/lib .*passed: apiVersion 1.4.318"
           ${host_args})
+    # DRIVER_FILES names another driver's manifest, which reaches vulkaninfo instead of KosmicKrisp's.
+    set(other "${WORK_DIR}/homebrew/share/vulkan/icd.d/lvp_icd.aarch64.json")
+    file(WRITE "${other}" "{}\n")
+    set(fake_other "${WORK_DIR}/fake-vulkaninfo-other")
+    file(WRITE "${fake_other}" "#!/bin/sh
+[ \"$VK_DRIVER_FILES\" = '${other}' ] || { echo \"VK_DRIVER_FILES='$VK_DRIVER_FILES'\" >&2; exit 4; }
+cat '${WORK_DIR}/lavapipe.txt'
+")
+    file(CHMOD "${fake_other}" PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE)
+    check(0 "VK_DRIVER_FILES=${other} .*passed: apiVersion 1.4.318"
+          ${host_args} "-DDRIVER_FILES=${other}" "-DVULKANINFO=${fake_other}")
+    # A missing DRIVER_FILES is named; the bootstrap hint is only for the prefix's own manifest.
+    check(1 "check-vulkan-device: no driver manifest ${WORK_DIR}/missing/lvp_icd\\.json"
+          ${host_args} "-DDRIVER_FILES=${WORK_DIR}/missing/lvp_icd.json")
+    if(last_output MATCHES "run bootstrap")
+        message(FATAL_ERROR "FAIL: a missing DRIVER_FILES gets the bootstrap hint:\n${last_output}")
+    endif()
 endif()
 
 # A passing check also prints what vulkaninfo wrote to stderr (loader and driver warnings). The fake

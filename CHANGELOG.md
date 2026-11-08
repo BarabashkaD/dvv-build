@@ -5,6 +5,38 @@ versions follow semantic versioning with the dvv rules: compatible = the same ma
 minimum version, also for 0.x; breaking changes only in a new major, after a deprecation. This file is
 the release notes (there are no GitHub Releases).
 
+## [0.4.0] - 2026-11-08
+
+macOS CI runs the GPU tests. GitHub's `xcode-27` runners have no Metal device that KosmicKrisp can
+use, so until now the macOS jobs skipped them.
+
+### Added
+- The `macos` CI jobs run the GPU tests on Mesa's lavapipe from Homebrew's `mesa` bottle when the
+  runner's Metal device cannot run KosmicKrisp, required and with synchronization validation as on
+  Linux. lavapipe is a CI-only exception to U-MAC2 (KosmicKrisp only): it is never in the prefix or
+  a package, and it is unpinned, as Linux CI's apt lavapipe. The display tests still run only on
+  KosmicKrisp with a desktop session.
+- `tools/select-vulkan-driver.cmake` chooses the driver (KosmicKrisp first) and installs lavapipe;
+  it prints the `mesa` and `llvm` versions. A step checks that the Vulkan loader loads only that
+  driver and the validation layer (Homebrew's `mesa` also installs MoltenVK and its own
+  KosmicKrisp).
+- The repository variable `DVV_MACOS_SOFTWARE_GPU=off` (or `false`, `0`, `no`, any case) skips
+  lavapipe (the GPU tests skip on macOS, as before), a way out of a bad Homebrew bottle without a
+  release.
+- `DVV_TEST_VK_DRIVER_FILES` (cache, macOS): the Vulkan driver manifest every test runs on; empty
+  keeps the prefix's KosmicKrisp.
+- `tools/check-vulkan-device.cmake` takes `-DDRIVER_FILES=<manifest>`.
+
+### Changed
+- The macOS device step fails the job on a prefix without KosmicKrisp's manifest, on a failed
+  `brew install mesa` (three attempts) and on a lavapipe without a Vulkan 1.4 device; it no longer
+  only notes a missing device. A caller's macOS CI now runs its GPU tests, which can newly fail.
+- dvv-gpu's pipeline cache tests fail on lavapipe before dvv-gpu 0.2.1 (Mesa 26.2 truncates its
+  cache header): a repository that runs dvv-gpu's tests (rawreel with `test-dependencies`) needs
+  dvv-gpu 0.2.1 with this release.
+- `check-vulkan-device.cmake` finds the prefix's loader through `DYLD_FALLBACK_LIBRARY_PATH`
+  instead of `DYLD_LIBRARY_PATH`, so another driver's own libraries load from where they are.
+
 ## [0.3.2] - 2026-11-08
 
 ### Changed

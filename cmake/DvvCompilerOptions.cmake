@@ -66,16 +66,29 @@ if(DVV_SANITIZE)
         add_link_options(-fsanitize=${sanitizers})
     endif()
 endif()
-# On macOS every test runs on the prefix's KosmicKrisp driver only (spec U-MAC2), whatever other
-# Vulkan drivers (MoltenVK of an installed SDK) the machine has.
+# On macOS every test runs on one Vulkan driver only, whatever other drivers (MoltenVK of an installed
+# SDK) the machine has: the prefix's KosmicKrisp (spec U-MAC2), or the manifest that
+# DVV_TEST_VK_DRIVER_FILES names. The CI jobs set it to lavapipe's when the runner's Metal device
+# cannot run KosmicKrisp (a CI-only exception to U-MAC2; lavapipe is never shipped).
+set(DVV_TEST_VK_DRIVER_FILES "" CACHE FILEPATH
+    "macOS: the Vulkan driver manifest the tests run on (empty: the prefix's KosmicKrisp)")
 if(APPLE)
-    find_file(DVV_KOSMICKRISP_MANIFEST libkosmickrisp_icd.json PATHS ${CMAKE_PREFIX_PATH}
-              PATH_SUFFIXES share/vulkan/icd.d NO_DEFAULT_PATH NO_CACHE)
-    if(NOT DVV_KOSMICKRISP_MANIFEST)
-        message(FATAL_ERROR "No share/vulkan/icd.d/libkosmickrisp_icd.json in CMAKE_PREFIX_PATH "
-                            "(${CMAKE_PREFIX_PATH}); run dvv-build's bootstrap.sh")
+    if(DVV_TEST_VK_DRIVER_FILES)
+        if(NOT EXISTS "${DVV_TEST_VK_DRIVER_FILES}" OR IS_DIRECTORY "${DVV_TEST_VK_DRIVER_FILES}")
+            message(FATAL_ERROR "DVV_TEST_VK_DRIVER_FILES names ${DVV_TEST_VK_DRIVER_FILES}, which does "
+                                "not exist")
+        endif()
+        set(test_driver "${DVV_TEST_VK_DRIVER_FILES}")
+    else()
+        find_file(DVV_KOSMICKRISP_MANIFEST libkosmickrisp_icd.json PATHS ${CMAKE_PREFIX_PATH}
+                  PATH_SUFFIXES share/vulkan/icd.d NO_DEFAULT_PATH NO_CACHE)
+        if(NOT DVV_KOSMICKRISP_MANIFEST)
+            message(FATAL_ERROR "No share/vulkan/icd.d/libkosmickrisp_icd.json in CMAKE_PREFIX_PATH "
+                                "(${CMAKE_PREFIX_PATH}); run dvv-build's bootstrap.sh")
+        endif()
+        set(test_driver "${DVV_KOSMICKRISP_MANIFEST}")
     endif()
-    list(APPEND DVV_TEST_ENVIRONMENT "VK_DRIVER_FILES=set:${DVV_KOSMICKRISP_MANIFEST}")
+    list(APPEND DVV_TEST_ENVIRONMENT "VK_DRIVER_FILES=set:${test_driver}")
 endif()
 
 # Maps the parent of the top-level source tree (a library's dvv root, or the folder holding the app)

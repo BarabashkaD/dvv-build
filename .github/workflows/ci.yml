@@ -46,6 +46,8 @@ jobs:
         run: cmake "-DWORK_DIR=${{ runner.temp }}/superbuild-scripts-test" -P tests/deps/test_superbuild_scripts.cmake
       - name: Vulkan device check tests
         run: cmake "-DWORK_DIR=${{ runner.temp }}/check-vulkan-device-test" -P tests/ci/test_check_vulkan_device.cmake
+      - name: Vulkan driver selection tests
+        run: cmake "-DWORK_DIR=${{ runner.temp }}/select-vulkan-driver-test" -P tests/ci/test_select_vulkan_driver.cmake
       - name: Privacy lint tests
         run: cmake "-DWORK_DIR=${{ runner.temp }}/privacy-lint-test" -P tests/privacy/test_privacy_lint.cmake
       - name: Preset files tests
