@@ -19,7 +19,7 @@
       "generator": "Visual Studio 18 2026",
       "architecture": "x64",
       "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" },
-      "cacheVariables": { "CMAKE_PREFIX_PATH": "${sourceDir}/libs/_third_party/msvc" }
+      "cacheVariables": { "CMAKE_PREFIX_PATH": "${sourceDir}/libs/_third_party/msvc;${sourceDir}/libs/_third_party/msvc-wx" }
     },
     {
       "name": "vs2026-asan",
@@ -35,7 +35,7 @@
       "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" },
       "cacheVariables": {
         "CMAKE_CXX_COMPILER": "clang++-19",
-        "CMAKE_PREFIX_PATH": "${sourceDir}/libs/_third_party/clang",
+        "CMAKE_PREFIX_PATH": "${sourceDir}/libs/_third_party/clang;${sourceDir}/libs/_third_party/clang-wx",
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
       }
     },
@@ -62,7 +62,7 @@
         "CMAKE_CXX_COMPILER": "/usr/bin/clang++",
         "CMAKE_OBJC_COMPILER": "/usr/bin/clang",
         "CMAKE_OBJCXX_COMPILER": "/usr/bin/clang++",
-        "CMAKE_PREFIX_PATH": "${sourceDir}/libs/_third_party/appleclang",
+        "CMAKE_PREFIX_PATH": "${sourceDir}/libs/_third_party/appleclang;${sourceDir}/libs/_third_party/appleclang-wx",
         "CMAKE_BUILD_RPATH": "${sourceDir}/libs/_third_party/appleclang/lib",
         "CMAKE_OSX_DEPLOYMENT_TARGET": "27.0",
         "CMAKE_OSX_ARCHITECTURES": "arm64",

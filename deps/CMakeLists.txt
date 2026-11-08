@@ -2,7 +2,9 @@
 # from versions.cmake into DVV_THIRD_PARTY_PREFIX and writes there THIRD_PARTY_NOTICES.txt (the
 # shipped entries), THIRD_PARTY_NOTICES-all.txt (every entry), the dvv_ffmpeg_sdk package and
 # dvv-third-party-state.cmake. It builds Release, plus Debug where a declaration lists CONFIGS Debug
-# Release (Visual Studio only).
+# Release (Visual Studio only). An entry with SEPARATE_PREFIX <suffix> (wxWidgets: wx) installs into
+# the folder <install dir>-<suffix> next to it instead, marked with dvv-inputs.sha256 and skipped
+# while that marker matches; consumers list both folders in CMAKE_PREFIX_PATH.
 #
 #   cmake -S deps -B <build dir> -DDVV_THIRD_PARTY_PREFIX=<install dir> [-DDVV_BUNDLE_FFMPEG=OFF]
 #         [-G Ninja -DCMAKE_C_COMPILER=clang-19 -DCMAKE_CXX_COMPILER=clang++-19]   (Linux)
@@ -11,6 +13,14 @@
 #   cmake --build <build dir> --config Release --parallel
 # bootstrap.ps1 and bootstrap.sh run these two commands.
 cmake_minimum_required(VERSION 4.2)
+# The Windows validation layer is extracted from the LunarG SDK installer exe by CMake's bundled
+# libarchive (deps/versions.cmake); 4.3.2, the version tools/requirements.txt pins, is the oldest
+# one verified to read it.
+if(CMAKE_HOST_WIN32 AND CMAKE_VERSION VERSION_LESS 4.3.2)
+    message(FATAL_ERROR "CMake ${CMAKE_VERSION} is too old for the Windows superbuild: 4.3.2 or "
+                        "newer is needed to extract the LunarG SDK installer. Install the CMake "
+                        "that tools/requirements.txt pins and put it first in PATH.")
+endif()
 project(dvv_third_party LANGUAGES C CXX)
 
 include(ExternalProject)
@@ -39,9 +49,40 @@ set(shipped_entries "")
 set(shipped_names "")
 foreach(name IN LISTS names)
     foreach(key IN ITEMS VERSION URL SHA256 SPDX LICENSE_FILES DEPENDS PREBUILT CMAKE_ARGS
-                         POST_INSTALL SHIPPED)
+                         POST_INSTALL SHIPPED SEPARATE_PREFIX)
         get_property(${key} GLOBAL PROPERTY "DVV_THIRD_PARTY_${name}_${key}")
     endforeach()
+    if(name STREQUAL "wxWidgets")
+        # dvv-build 0.2.0 installed wxWidgets at the prefix root. Its package folder
+        # (lib/cmake/wxWidgets-3.3) would be found before the one in the separate prefix, so it
+        # goes; wxWidgets is the only entry that moved out of the prefix.
+        file(GLOB stale_packages LIST_DIRECTORIES true "${prefix}/lib/cmake/wxWidgets*")
+        foreach(stale IN LISTS stale_packages)
+            message(STATUS "wxWidgets: removing the old root-level package ${stale}")
+            file(REMOVE_RECURSE "${stale}")
+        endforeach()
+    endif()
+    # An entry with SEPARATE_PREFIX installs into <prefix>-<suffix>, which CI caches on its own and
+    # restores with its marker. A matching marker skips the entry; otherwise the folder and the
+    # entry's step stamps go, so a surviving build tree cannot skip the install.
+    set(separate_skip FALSE)
+    if(SEPARATE_PREFIX)
+        set(sibling "${prefix}-${SEPARATE_PREFIX}")
+        set(stamp_dir "${CMAKE_BINARY_DIR}/${name}-stamp")
+        cmake_path(GET prefix FILENAME toolchain)
+        dvv_third_party_separate_prefix_hash(${name} "${toolchain}" separate_hash)
+        set(marker "")
+        if(EXISTS "${sibling}/dvv-inputs.sha256")
+            file(READ "${sibling}/dvv-inputs.sha256" marker)
+        endif()
+        if(marker STREQUAL separate_hash)
+            set(separate_skip TRUE)
+            message(STATUS "${name}: ${sibling} matches its inputs; not built")
+        else()
+            message(STATUS "${name}: building into ${sibling}")
+            file(REMOVE_RECURSE "${sibling}" "${stamp_dir}")
+        endif()
+    endif()
     if(POST_INSTALL)
         set(post_install "${CMAKE_COMMAND}" -DSOURCE_DIR=<SOURCE_DIR> -DPREFIX=<INSTALL_DIR>
                          -DBINARY_DIR=<BINARY_DIR> -P "${POST_INSTALL}")
@@ -49,7 +90,18 @@ foreach(name IN LISTS names)
         set(post_install "${CMAKE_COMMAND}" -E true)
     endif()
     dvv_third_party_shared_archive(${name} shared_archive)
-    if(shared_archive)
+    if(separate_skip)
+        # Nothing to do; the notices read the licence files copied into the separate prefix.
+        ExternalProject_Add(${name}
+            DOWNLOAD_COMMAND ""
+            SOURCE_DIR "${sibling}/dvv-licences"
+            STAMP_DIR "${stamp_dir}"
+            INSTALL_DIR "${sibling}"
+            DEPENDS ${DEPENDS}
+            CONFIGURE_COMMAND ""
+            BUILD_COMMAND ""
+            INSTALL_COMMAND "")
+    elseif(shared_archive)
         # The archive of an entry this one depends on, already extracted into <prefix>/<that
         # entry>: nothing to download or extract.
         ExternalProject_Add(${name}
@@ -88,16 +140,37 @@ foreach(name IN LISTS names)
             list(APPEND install_command "${CMAKE_COMMAND}" --install <BINARY_DIR>
                                         --config ${config})
         endforeach()
+        set(install_dir "${prefix}")
+        set(separate_args "")
+        set(separate_steps "")
+        set(finish_command "")
+        if(SEPARATE_PREFIX)
+            # Installed into the separate prefix; its dependencies are still found in the prefix
+            # (the later -D wins over the common arguments). The hash in its arguments makes a
+            # changed marker reconfigure it. The last install command copies the licence files and
+            # writes the marker.
+            set(install_dir "${sibling}")
+            set(separate_args "-DCMAKE_PREFIX_PATH=${prefix}"
+                              "-DDVV_SEPARATE_PREFIX_HASH=${separate_hash}")
+            set(separate_steps STAMP_DIR "${stamp_dir}")
+            list(JOIN LICENSE_FILES "|" licence_patterns)
+            set(finish_command COMMAND "${CMAKE_COMMAND}" -DSOURCE_DIR=<SOURCE_DIR>
+                -DSIBLING=<INSTALL_DIR> -DHASH=${separate_hash}
+                "-DLICENSE_FILES=${licence_patterns}"
+                -P "${CMAKE_CURRENT_LIST_DIR}/separate-prefix-finish.cmake")
+        endif()
         ExternalProject_Add(${name}
             URL "${URL}"
             URL_HASH "SHA256=${SHA256}"
             DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-            INSTALL_DIR "${prefix}"
+            ${separate_steps}
+            INSTALL_DIR "${install_dir}"
             DEPENDS ${DEPENDS}
-            CMAKE_ARGS ${common_args} ${CMAKE_ARGS}
+            CMAKE_ARGS ${common_args} ${CMAKE_ARGS} ${separate_args}
             BUILD_COMMAND ${build_command}
             INSTALL_COMMAND ${install_command}
-                    COMMAND ${post_install})
+                    COMMAND ${post_install}
+                    ${finish_command})
     endif()
     ExternalProject_Get_Property(${name} SOURCE_DIR)
     list(JOIN LICENSE_FILES "|" licence_files)

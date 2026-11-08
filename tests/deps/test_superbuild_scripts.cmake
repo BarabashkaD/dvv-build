@@ -180,30 +180,115 @@ run_script(0 "" "${deps}/post-install/vk-bootstrap.cmake" "-DSOURCE_DIR=${source
 expect_file_text("${prefix}/src/vk-bootstrap/VkBootstrap.cpp" "// vk-bootstrap")
 run_script(1 "pass -DPREFIX" "${deps}/post-install/vk-bootstrap.cmake" "-DSOURCE_DIR=${source}")
 
-# post-install/Vulkan-ValidationLayers.cmake makes the Linux manifest name its library relative to
-# itself and leaves the Windows layout alone.
+# post-install/Vulkan-ValidationLayers.cmake installs the layer of the extracted LunarG SDK (its top
+# folder dropped by the extract step) and its manifest, keeps only the licence file the notices
+# read and removes the rest of the SDK. Linux: x86_64/lib/<layer>.so into <prefix>/lib (debug
+# sections stripped when a strip program is found), the manifest into
+# <prefix>/share/vulkan/explicit_layer.d with library_path relative to it, LICENSE.txt kept. Windows
+# (the installer's Bin/ folder): DLL and manifest into <prefix>/bin, the layer's LICENSE.txt
+# (a licence supplement) kept.
 set(script "${deps}/post-install/Vulkan-ValidationLayers.cmake")
-set(prefix "${WORK_DIR}/validation/linux")
-set(manifest "${prefix}/share/vulkan/explicit_layer.d/VkLayer_khronos_validation.json")
-file(WRITE "${manifest}" "{\n    \"layer\": {\n        \"name\": \"VK_LAYER_KHRONOS_validation\",\n\
-        \"library_path\": \"libVkLayer_khronos_validation.so\",\n        \"api_version\": \"1.4.365\"\n\
+set(layer VkLayer_khronos_validation)
+set(source "${WORK_DIR}/validation/linux/source")
+set(prefix "${WORK_DIR}/validation/linux/prefix")
+file(WRITE "${source}/x86_64/lib/lib${layer}.so" "layer\n")
+file(WRITE "${source}/x86_64/lib/libvulkan.so.1" "loader\n")
+file(WRITE "${source}/x86_64/share/vulkan/explicit_layer.d/${layer}.json"
+     "{\n    \"layer\": {\n        \"name\": \"VK_LAYER_KHRONOS_validation\",\n\
+        \"library_path\": \"libVkLayer_khronos_validation.so\",\n        \"api_version\": \"1.4.363\"\n\
     }\n}\n")
-set(relative "\"library_path\": \"../../../lib/libVkLayer_khronos_validation.so\",\n")
-run_script(1 "libVkLayer_khronos_validation.so is not in <prefix>/lib" "${script}"
-           "-DPREFIX=${prefix}")
-file(WRITE "${prefix}/lib/libVkLayer_khronos_validation.so" "")
-run_script(0 "" "${script}" "-DPREFIX=${prefix}")
-expect_file_text("${manifest}" "\"name\": \"VK_LAYER_KHRONOS_validation\",\n *${relative}")
-run_script(0 "" "${script}" "-DPREFIX=${prefix}")
-expect_file_text("${manifest}" "${relative} *\"api_version\"")
-set(prefix "${WORK_DIR}/validation/windows")
-file(WRITE "${prefix}/bin/VkLayer_khronos_validation.json"
-     "{\"layer\": {\"library_path\": \".\\\\VkLayer_khronos_validation.dll\"}}")
-run_script(0 "" "${script}" "-DPREFIX=${prefix}")
-expect_file_text("${prefix}/bin/VkLayer_khronos_validation.json"
+file(WRITE "${source}/LICENSE.txt" "LunarG statement\n")
+file(WRITE "${source}/setup-env.sh" "sdk\n")
+set(linux_args "-DSOURCE_DIR=${source}" "-DPREFIX=${prefix}" -DPLATFORM=Linux)
+run_script(1 "pass -DPREFIX" "${script}" "-DSOURCE_DIR=${source}")
+run_script(0 "no strip program: lib${layer}\\.so keeps its debug sections" "${script}" ${linux_args}
+           "-DSTRIP=")
+expect_file_text("${prefix}/lib/lib${layer}.so" "^layer\n$")
+expect_file_text("${prefix}/share/vulkan/explicit_layer.d/${layer}.json"
+                 "\"name\": \"VK_LAYER_KHRONOS_validation\",\n *\"library_path\": \
+\"\\.\\./\\.\\./\\.\\./lib/libVkLayer_khronos_validation\\.so\",\n *\"api_version\"")
+file(GLOB_RECURSE kept LIST_DIRECTORIES false RELATIVE "${source}" "${source}/*")
+if(NOT kept STREQUAL "LICENSE.txt")
+    message(FATAL_ERROR "FAIL: the Linux post-install left '${kept}' in SOURCE_DIR")
+endif()
+expect_file_text("${source}/LICENSE.txt" "^LunarG statement\n$")
+if(EXISTS "${prefix}/lib/libvulkan.so.1")
+    message(FATAL_ERROR "FAIL: the Linux post-install installed more than the layer")
+endif()
+# Run again after the SDK is gone (the extract step did not run again): nothing to do.
+run_script(0 "the validation layer is already installed" "${script}" ${linux_args})
+# Without the SDK and with an installed file missing it cannot recover.
+file(REMOVE "${prefix}/share/vulkan/explicit_layer.d/${layer}.json")
+run_script(1 "the LunarG SDK is not in .* and .*${layer}\\.json is missing; run bootstrap with \
+--force" "${script}" ${linux_args})
+# A strip program found strips the layer's debug sections. The fake strip records its arguments,
+# so not on Windows.
+if(NOT CMAKE_HOST_WIN32)
+    set(source "${WORK_DIR}/validation/strip/source")
+    set(prefix "${WORK_DIR}/validation/strip/prefix")
+    set(strip "${WORK_DIR}/validation/strip/strip")
+    file(WRITE "${source}/x86_64/lib/lib${layer}.so" "layer\n")
+    file(WRITE "${source}/x86_64/share/vulkan/explicit_layer.d/${layer}.json"
+         "{\"layer\": {\"library_path\": \"../../../lib/libVkLayer_khronos_validation.so\"}}\n")
+    file(WRITE "${source}/LICENSE.txt" "LunarG statement\n")
+    file(WRITE "${strip}" "#!/bin/sh\necho \"$@\" > '${strip}.args'\n")
+    file(CHMOD "${strip}" PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE)
+    run_script(0 "" "${script}" "-DSOURCE_DIR=${source}" "-DPREFIX=${prefix}"
+               -DPLATFORM=Linux "-DSTRIP=${strip}")
+    expect_file_text("${strip}.args" "^--strip-debug ${prefix}/lib/lib${layer}\\.so\n$")
+endif()
+
+set(source "${WORK_DIR}/validation/windows/source")
+set(prefix "${WORK_DIR}/validation/windows/prefix")
+file(WRITE "${source}/${layer}.dll" "layer\n")
+file(WRITE "${source}/${layer}.pdb" "symbols\n")
+file(WRITE "${source}/${layer}.json"
+     "{\"layer\": {\"library_path\": \".\\\\VkLayer_khronos_validation.dll\"}}\n")
+file(WRITE "${source}/vulkan-1.dll" "loader\n")
+set(windows_args "-DSOURCE_DIR=${source}" "-DPREFIX=${prefix}" -DPLATFORM=Windows)
+run_script(0 "" "${script}" ${windows_args})
+expect_file_text("${prefix}/bin/${layer}.dll" "^layer\n$")
+expect_file_text("${prefix}/bin/${layer}.json"
                  "\"library_path\": \"\\.\\\\\\\\VkLayer_khronos_validation\\.dll\"")
-run_script(1 "no VkLayer_khronos_validation.json in the prefix" "${script}"
-           "-DPREFIX=${WORK_DIR}/validation/empty")
+foreach(gone IN ITEMS "${prefix}/bin/${layer}.pdb" "${prefix}/bin/vulkan-1.dll"
+                      "${prefix}/share/vulkan/explicit_layer.d/${layer}.json")
+    if(EXISTS "${gone}")
+        message(FATAL_ERROR "FAIL: ${gone} exists after the Windows post-install")
+    endif()
+endforeach()
+file(GLOB_RECURSE kept LIST_DIRECTORIES false RELATIVE "${source}" "${source}/*")
+if(NOT kept STREQUAL "vulkan-validationlayers/LICENSE.txt")
+    message(FATAL_ERROR "FAIL: the Windows post-install left '${kept}' in SOURCE_DIR")
+endif()
+file(SHA256 "${source}/vulkan-validationlayers/LICENSE.txt" kept_hash)
+file(SHA256 "${deps}/licenses/Vulkan-ValidationLayers-supplement/vulkan-validationlayers/LICENSE.txt"
+     supplement_hash)
+if(NOT kept_hash STREQUAL supplement_hash)
+    message(FATAL_ERROR "FAIL: the kept LICENSE.txt is not the layer's licence supplement")
+endif()
+run_script(0 "the validation layer is already installed" "${script}" ${windows_args})
+file(REMOVE "${prefix}/bin/${layer}.dll")
+run_script(1 "the LunarG SDK is not in .* and .*${layer}\\.dll is missing; run bootstrap with \
+--force" "${script}" ${windows_args})
+# An SDK layout the script does not know (the top folder not dropped, or a new top-level entry) is
+# reported as such, whatever is installed: --force would extract it the same way again.
+set(source "${WORK_DIR}/validation/unexpected-windows/source")
+set(prefix "${WORK_DIR}/validation/unexpected-windows/prefix")
+file(WRITE "${source}/Bin/${layer}.dll" "layer\n")
+file(WRITE "${source}/Lib/vulkan-1.lib" "loader\n")
+run_script(1 "unexpected LunarG SDK layout in .*unexpected-windows/source \\(no .*${layer}\\.dll; \
+found Bin, Lib\\)" "${script}" "-DSOURCE_DIR=${source}" "-DPREFIX=${prefix}" -DPLATFORM=Windows)
+set(source "${WORK_DIR}/validation/unexpected-linux/source")
+set(prefix "${WORK_DIR}/validation/unexpected-linux/prefix")
+file(WRITE "${source}/LICENSE.txt" "LunarG statement\n")
+file(WRITE "${source}/1.4.363.1/x86_64/lib/lib${layer}.so" "layer\n")
+file(WRITE "${prefix}/lib/lib${layer}.so" "source-built layer\n")
+file(WRITE "${prefix}/share/vulkan/explicit_layer.d/${layer}.json" "{}\n")
+run_script(1 "unexpected LunarG SDK layout in .*unexpected-linux/source \\(no .*lib${layer}\\.so; \
+found 1\\.4\\.363\\.1\\)" "${script}" "-DSOURCE_DIR=${source}" "-DPREFIX=${prefix}"
+           -DPLATFORM=Linux)
+run_script(1 "PLATFORM must be Windows or Linux" "${script}" "-DSOURCE_DIR=${source}"
+           "-DPREFIX=${prefix}" -DPLATFORM=Darwin)
 
 # dvv_third_party_build_configs(): a single-config generator builds Release only.
 set(probe "${WORK_DIR}/configs/probe.cmake")
@@ -299,6 +384,9 @@ while [ $# -gt 0 ]; do
     shift
 done
 mkdir -p \"$root/macOS/lib\" \"$root/macOS/bin\" \"$root/macOS/share/vulkan/icd.d\" \"$root/Licenses\"
+mkdir -p \"$root/macOS/share/vulkan/explicit_layer.d\"
+echo layer > \"$root/macOS/lib/libVkLayer_khronos_validation.dylib\"
+printf '{\\n    \"layer\": {\\n        \"library_path\": \"libVkLayer_khronos_validation.dylib\",\\n        \"api_version\": \"1.4.363\"\\n    }\\n}\\n' > \"$root/macOS/share/vulkan/explicit_layer.d/VkLayer_khronos_validation.json\"
 echo driver > \"$root/macOS/lib/libvulkan_kosmickrisp.dylib\"
 echo moltenvk > \"$root/macOS/lib/libMoltenVK.dylib\"
 printf '#!/bin/sh\\necho vulkaninfo\\n' > \"$root/macOS/bin/vulkaninfo\"
@@ -318,6 +406,11 @@ echo 'Revisions' > \"$root/VERSIONS.txt\"
     expect_file_text("${prefix}/share/vulkan/icd.d/libkosmickrisp_icd.json"
         "\"api_version\": \"1\\.4\\.0\",\n *\"library_path\": \"\\.\\./\\.\\./\\.\\./lib/\
 libvulkan_kosmickrisp\\.dylib\"\n")
+    # The validation layer of the same SDK (entry Vulkan-ValidationLayers), the dylib whole.
+    expect_file_text("${prefix}/lib/libVkLayer_khronos_validation.dylib" "^layer\n$")
+    expect_file_text("${prefix}/share/vulkan/explicit_layer.d/VkLayer_khronos_validation.json"
+        "\"library_path\": \"\\.\\./\\.\\./\\.\\./lib/libVkLayer_khronos_validation\\.dylib\",\n \
+*\"api_version\"")
     expect_file_text("${prefix}/bin/vulkaninfo" "echo vulkaninfo")
     execute_process(COMMAND "${prefix}/bin/vulkaninfo" RESULT_VARIABLE status OUTPUT_QUIET)
     if(NOT status EQUAL 0)
@@ -336,6 +429,9 @@ libvulkan_kosmickrisp\\.dylib\"\n")
     run_script(0 "KosmicKrisp is already installed" "${script}" "-DSOURCE_DIR=${source}"
                "-DPREFIX=${prefix}" "-DBINARY_DIR=${binary}")
     # Without the installer and without the installed files it cannot recover.
+    file(REMOVE "${prefix}/share/vulkan/explicit_layer.d/VkLayer_khronos_validation.json")
+    run_script(1 "VkLayer_khronos_validation\\.json is missing; run bootstrap with --force"
+               "${script}" "-DSOURCE_DIR=${source}" "-DPREFIX=${prefix}" "-DBINARY_DIR=${binary}")
     file(REMOVE "${prefix}/lib/libvulkan_kosmickrisp.dylib")
     run_script(1 "the SDK installer is not in .*; run bootstrap with --force" "${script}"
                "-DSOURCE_DIR=${source}" "-DPREFIX=${prefix}" "-DBINARY_DIR=${binary}")
@@ -346,5 +442,169 @@ libvulkan_kosmickrisp\\.dylib\"\n")
     run_script(1 "the Vulkan SDK installer failed \\(3\\).*installer broke" "${script}"
                "-DSOURCE_DIR=${source}" "-DPREFIX=${prefix}" "-DBINARY_DIR=${binary}")
 endif()
+
+
+# dvv_third_party_separate_prefix_hash(): the marker of an entry installed into its own prefix is
+# the SHA256 of one line per key (VERSION, URL, SHA256, LICENSE_FILES, CONFIGS, CMAKE_ARGS), then
+# RECIPE_REV and TOOLCHAIN. SPDX and the other entries do not enter it.
+set(probe "${WORK_DIR}/separate-prefix/probe.cmake")
+file(WRITE "${probe}" "include(\"${CMAKE_CURRENT_LIST_DIR}/../../cmake/DvvThirdParty.cmake\")
+set(CMAKE_SYSTEM_NAME Darwin)
+if(DEFINED PROBE_REV)
+    set(DVV_SEPARATE_PREFIX_RECIPE_REV \${PROBE_REV})
+endif()
+if(NOT DEFINED PROBE_KIND)
+    set(PROBE_KIND \"SEPARATE_PREFIX wx\")
+endif()
+separate_arguments(kind UNIX_COMMAND \"\${PROBE_KIND}\")
+dvv_third_party(other VERSION \"\${OTHER_VERSION}\" URL https://example.com/other.tgz
+    SHA256 ${hash_zero} SPDX MIT LINKAGE static LICENSE_FILES LICENSE)
+dvv_third_party(probe VERSION \"\${PROBE_VERSION}\" URL https://example.com/p.tgz
+    SHA256 1111111111111111111111111111111111111111111111111111111111111111
+    SPDX \"\${PROBE_SPDX}\" LINKAGE static LICENSE_FILES LICENSE docs/*.txt
+    CMAKE_ARGS -DA=1 \"\${PROBE_ARG}\" \${kind})
+dvv_third_party_separate_prefix_hash(probe \"\${PROBE_TOOLCHAIN}\" hash)
+message(STATUS \"hash=<\${hash}>\")
+")
+# probe_hash(<out_var> [-D<name>=<value>...]): the probe's hash for the default inputs, changed by
+# the given definitions.
+function(probe_hash out_var)
+    set(defaults -DPROBE_VERSION=1.0 -DPROBE_ARG=-DB=2 -DPROBE_SPDX=MIT -DOTHER_VERSION=1.0
+                 -DPROBE_TOOLCHAIN=appleclang)
+    execute_process(COMMAND "${CMAKE_COMMAND}" ${defaults} ${ARGN} -P "${probe}"
+                    RESULT_VARIABLE status OUTPUT_VARIABLE out ERROR_VARIABLE err)
+    if(NOT status EQUAL 0 OR NOT out MATCHES "hash=<([0-9a-f]+)>")
+        message(FATAL_ERROR "FAIL: the separate-prefix probe (${ARGN}) failed:\n${out}${err}")
+    endif()
+    string(LENGTH "${CMAKE_MATCH_1}" length)
+    if(NOT length EQUAL 64)
+        message(FATAL_ERROR "FAIL: the separate-prefix hash '${CMAKE_MATCH_1}' is not 64 hex")
+    endif()
+    set(${out_var} "${CMAKE_MATCH_1}" PARENT_SCOPE)
+endfunction()
+probe_hash(base)
+probe_hash(again)
+if(NOT base STREQUAL again)
+    message(FATAL_ERROR "FAIL: the separate-prefix hash differs between two calls")
+endif()
+string(SHA256 expected "VERSION=1.0
+URL=https://example.com/p.tgz
+SHA256=1111111111111111111111111111111111111111111111111111111111111111
+LICENSE_FILES=LICENSE;docs/*.txt
+CONFIGS=Release
+CMAKE_ARGS=-DA=1;-DB=2
+RECIPE_REV=1
+TOOLCHAIN=appleclang
+")
+if(NOT base STREQUAL expected)
+    message(FATAL_ERROR "FAIL: the separate-prefix hash is not the SHA256 of its key lines")
+endif()
+foreach(change IN ITEMS -DPROBE_ARG=-DB=3 -DPROBE_VERSION=1.1 -DPROBE_REV=2
+                        -DPROBE_TOOLCHAIN=clang)
+    probe_hash(changed ${change})
+    if(changed STREQUAL base)
+        message(FATAL_ERROR "FAIL: the separate-prefix hash ignores ${change}")
+    endif()
+endforeach()
+foreach(change IN ITEMS -DPROBE_SPDX=BSD-3-Clause -DOTHER_VERSION=2.0)
+    probe_hash(changed ${change})
+    if(NOT changed STREQUAL base)
+        message(FATAL_ERROR "FAIL: the separate-prefix hash depends on ${change}")
+    endif()
+endforeach()
+# The suffix is a plain folder-name part; a PREBUILT entry has no install to move; the hash needs
+# an entry with a separate prefix.
+run_script(1 "dvv_third_party\\(probe\\): SEPARATE_PREFIX must match \\^\\[a-z0-9\\]\\+\\$" "${probe}"
+           -DPROBE_VERSION=1.0 -DPROBE_ARG=-DB=2 -DPROBE_SPDX=MIT -DOTHER_VERSION=1.0
+           -DPROBE_TOOLCHAIN=appleclang "-DPROBE_KIND=SEPARATE_PREFIX Wx")
+run_script(1 "dvv_third_party\\(probe\\): SEPARATE_PREFIX is not for PREBUILT" "${probe}"
+           -DPROBE_VERSION=1.0 -DPROBE_ARG=-DB=2 -DPROBE_SPDX=MIT -DOTHER_VERSION=1.0
+           -DPROBE_TOOLCHAIN=appleclang "-DPROBE_KIND=SEPARATE_PREFIX wx PREBUILT")
+run_script(1 "dvv_third_party_separate_prefix_hash\\(probe\\): probe has no SEPARATE_PREFIX here"
+           "${probe}" -DPROBE_VERSION=1.0 -DPROBE_ARG=-DB=2 -DPROBE_SPDX=MIT -DOTHER_VERSION=1.0
+           -DPROBE_TOOLCHAIN=appleclang "-DPROBE_KIND=SHIPPED")
+
+# tools/separate-prefix-hash.cmake prints the hash the superbuild computes for this host, for
+# bootstrap and the CI cache key. The tool fixes DVV_BUNDLE_FFMPEG ON; the superbuild may run with
+# OFF, so the hash must not depend on it: the host probe requires the tool's hash with both values,
+# and on each of the three systems the two values give the same hash.
+set(tool "${CMAKE_CURRENT_LIST_DIR}/../../tools/separate-prefix-hash.cmake")
+execute_process(COMMAND "${CMAKE_COMMAND}" -DNAME=wxWidgets -DTOOLCHAIN=appleclang -P "${tool}"
+                RESULT_VARIABLE status OUTPUT_VARIABLE tool_out ERROR_VARIABLE err)
+if(NOT status EQUAL 0 OR NOT tool_out MATCHES "^hash=[0-9a-f]+\n$")
+    message(FATAL_ERROR "FAIL: separate-prefix-hash.cmake printed '${tool_out}' (${status}):\n${err}")
+endif()
+set(probe "${WORK_DIR}/separate-prefix/host-probe.cmake")
+file(WRITE "${probe}" "include(\"${CMAKE_CURRENT_LIST_DIR}/../../cmake/DvvThirdParty.cmake\")
+if(SYSTEM)
+    set(CMAKE_SYSTEM_NAME \"\${SYSTEM}\")
+else()
+    set(CMAKE_SYSTEM_NAME \"\${CMAKE_HOST_SYSTEM_NAME}\")
+endif()
+set(DVV_BUNDLE_FFMPEG \${BUNDLE})
+include(\"${deps}/versions.cmake\")
+dvv_third_party_separate_prefix_hash(wxWidgets appleclang hash)
+message(STATUS \"hash=<\${hash}>\")
+")
+string(REGEX REPLACE "^hash=([0-9a-f]+)\n$" "\\1" tool_hash "${tool_out}")
+string(LENGTH "${tool_hash}" length)
+if(NOT length EQUAL 64)
+    message(FATAL_ERROR "FAIL: separate-prefix-hash.cmake printed a hash of ${length} digits")
+endif()
+run_script(0 "hash=<${tool_hash}>" "${probe}" -DBUNDLE=ON)
+run_script(0 "hash=<${tool_hash}>" "${probe}" -DBUNDLE=OFF)
+foreach(system IN ITEMS Windows Linux Darwin)
+    set(system_hashes "")
+    foreach(bundle IN ITEMS ON OFF)
+        execute_process(COMMAND "${CMAKE_COMMAND}" "-DSYSTEM=${system}" "-DBUNDLE=${bundle}"
+                                -P "${probe}"
+                        RESULT_VARIABLE status OUTPUT_VARIABLE out ERROR_VARIABLE err)
+        if(NOT status EQUAL 0 OR NOT "${out}${err}" MATCHES "hash=<([0-9a-f]+)>")
+            message(FATAL_ERROR "FAIL: host probe for ${system}, ${bundle}:\n${out}${err}")
+        endif()
+        list(APPEND system_hashes "${CMAKE_MATCH_1}")
+    endforeach()
+    list(REMOVE_DUPLICATES system_hashes)
+    list(LENGTH system_hashes count)
+    if(NOT count EQUAL 1)
+        message(FATAL_ERROR "FAIL: on ${system} the wxWidgets hash depends on DVV_BUNDLE_FFMPEG")
+    endif()
+endforeach()
+run_script(1 "pass -DNAME=<entry> and -DTOOLCHAIN=<prefix folder name>" "${tool}" -DNAME=wxWidgets)
+
+# deps/separate-prefix-finish.cmake: the last install command of an entry with a separate prefix
+# copies its licence files (globs expanded, relative paths kept) into <sibling>/dvv-licences and
+# then writes the marker, without a newline.
+set(finish "${deps}/separate-prefix-finish.cmake")
+set(source "${WORK_DIR}/finish/source")
+set(sibling "${WORK_DIR}/finish/prefix-wx")
+foreach(path IN ITEMS docs/licence.txt src/png/LICENSE licenses/a.txt licenses/b.txt)
+    file(WRITE "${source}/${path}" "text of ${path}\n")
+endforeach()
+file(WRITE "${source}/licenses/c.md" "not a licence\n")
+file(WRITE "${sibling}/dvv-licences/stale.txt" "old\n")
+set(finish_args "-DSOURCE_DIR=${source}" "-DSIBLING=${sibling}" "-DHASH=${hash_zero}")
+run_script(0 "" "${finish}" ${finish_args}
+           "-DLICENSE_FILES=docs/licence.txt|src/png/LICENSE|licenses/*.txt")
+file(GLOB_RECURSE copied LIST_DIRECTORIES false RELATIVE "${sibling}" "${sibling}/*")
+list(SORT copied)
+if(NOT copied STREQUAL "dvv-inputs.sha256;dvv-licences/docs/licence.txt;\
+dvv-licences/licenses/a.txt;dvv-licences/licenses/b.txt;dvv-licences/src/png/LICENSE")
+    message(FATAL_ERROR "FAIL: the finish script left '${copied}' in the sibling prefix")
+endif()
+expect_file_text("${sibling}/dvv-licences/licenses/b.txt" "^text of licenses/b\\.txt\n$")
+file(READ "${sibling}/dvv-inputs.sha256" marker)
+if(NOT marker STREQUAL hash_zero)
+    message(FATAL_ERROR "FAIL: the marker holds '${marker}', not the hash without a newline")
+endif()
+# A missing licence file fails before the marker is written.
+file(REMOVE "${sibling}/dvv-inputs.sha256")
+run_script(1 "Licence file 'COPYING' not found in .*finish/source" "${finish}" ${finish_args}
+           "-DLICENSE_FILES=docs/licence.txt|COPYING")
+if(EXISTS "${sibling}/dvv-inputs.sha256")
+    message(FATAL_ERROR "FAIL: the finish script wrote the marker after a failure")
+endif()
+run_script(1 "pass a 64-digit lower-case hex -DHASH" "${finish}" "-DSOURCE_DIR=${source}"
+           "-DSIBLING=${sibling}" -DHASH=abc "-DLICENSE_FILES=docs/licence.txt")
 
 message(STATUS "superbuild script tests passed")

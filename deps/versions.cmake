@@ -100,63 +100,6 @@ AND BSL-1.0 AND Unlicense AND GPL-3.0-or-later WITH Bison-exception-2.2 AND NCSA
     ONLY_ON Darwin
     PREBUILT)
 
-# Vulkan validation layer (spec §5, §12) and what it is built from: loaded by the Vulkan loader in
-# Debug builds and tests only, never shipped. The versions are the set Vulkan-ValidationLayers
-# 1.4.365 pins in scripts/known_good.json. Vulkan-Utility-Libraries, SPIRV-Headers and SPIRV-Tools
-# are linked into the layer, so they have its linkage (runtime), not tool.
-dvv_third_party(Vulkan-Utility-Libraries
-    VERSION 1.4.365
-    URL https://github.com/KhronosGroup/Vulkan-Utility-Libraries/archive/refs/tags/v1.4.365.tar.gz
-    SHA256 257a8069bac42663471af2eda04901fd195c44eb92badab55124001215151857
-    SPDX Apache-2.0
-    LINKAGE runtime
-    LICENSE_FILES LICENSES/Apache-2.0.txt
-    DEPENDS Vulkan-Headers
-    CMAKE_ARGS -DBUILD_TESTS=OFF)
-
-# The known-good commit 496543121ce6. Its *.md documents are CC-BY-4.0 and are not installed.
-dvv_third_party(SPIRV-Headers
-    VERSION vulkan-sdk-1.4.363.0
-    URL https://github.com/KhronosGroup/SPIRV-Headers/archive/refs/tags/vulkan-sdk-1.4.363.0.tar.gz
-    SHA256 5b3a0d099f5c7649e29c0938476c462e71d66ad89a0bde42fa1ba3eb476956c9
-    SPDX MIT
-    LINKAGE runtime
-    LICENSE_FILES LICENSE
-    CMAKE_ARGS -DSPIRV_HEADERS_ENABLE_TESTS=OFF -DSPIRV_HEADERS_ENABLE_INSTALL=ON)
-
-# The known-good commit ef96ed763b43. SPIRV-Headers_SOURCE_DIR may name the prefix, because only its
-# include/ directory is used.
-dvv_third_party(SPIRV-Tools
-    VERSION 2026.4
-    URL https://github.com/KhronosGroup/SPIRV-Tools/archive/refs/tags/v2026.4.tar.gz
-    SHA256 92df4c377603f086c3d2a1eb2bd9b8f883a73ca890fb939d78a0cecdcc01686c
-    SPDX Apache-2.0
-    LINKAGE runtime
-    LICENSE_FILES LICENSE
-    DEPENDS SPIRV-Headers
-    CMAKE_ARGS -DSPIRV-Headers_SOURCE_DIR=<INSTALL_DIR> -DSPIRV_SKIP_TESTS=ON
-               -DSPIRV_SKIP_EXECUTABLES=ON -DSPIRV_WERROR=OFF)
-
-# Needs Python 3 to build. UPDATE_DEPS would clone every dependency at configure time. Bundled in
-# layers/external: parallel_hashmap (Apache-2.0), xxhash.h (BSD-2-Clause), inplace_function.h
-# (BSL-1.0) and VMA (MIT). On Linux the layer is built with its XCB, Xlib (+XRandR) and Wayland WSI
-# support (pkg-config modules xcb, x11, xrandr and wayland-client), so it validates surfaces and
-# swapchains; Windows always has Win32 WSI. The WSI options are explicit ON, so a build tree
-# configured without them is reconfigured. The post-install step lets the Linux manifest find its
-# library.
-dvv_third_party(Vulkan-ValidationLayers
-    VERSION 1.4.365
-    URL https://github.com/KhronosGroup/Vulkan-ValidationLayers/archive/refs/tags/v1.4.365.tar.gz
-    SHA256 2212c1f9dd3658704929168858ff7bec0935c4e87cee5aed6b3d9735af4929ad
-    SPDX "Apache-2.0 AND BSD-2-Clause AND BSL-1.0 AND MIT"
-    LINKAGE runtime
-    LICENSE_FILES LICENSE.txt LICENSES/*.txt
-    DEPENDS Vulkan-Headers Vulkan-Utility-Libraries SPIRV-Headers SPIRV-Tools
-    CMAKE_ARGS -DUPDATE_DEPS=OFF -DBUILD_TESTS=OFF -DBUILD_WERROR=OFF -DUSE_MIMALLOC=OFF
-               -DBUILD_WSI_XCB_SUPPORT=ON -DBUILD_WSI_XLIB_SUPPORT=ON
-               -DBUILD_WSI_XLIB_XRANDR_SUPPORT=ON -DBUILD_WSI_WAYLAND_SUPPORT=ON
-    POST_INSTALL post-install/Vulkan-ValidationLayers.cmake)
-
 # macOS (spec U-MAC2): the Vulkan loader is built from source and shipped in the app bundle (on
 # Windows and Linux the system's loader is used). Its install name is @rpath/libvulkan.1.dylib.
 # loader/cJSON.c is MIT (the notice is in cJSON.h); the other compiled files are Apache-2.0
@@ -177,10 +120,11 @@ dvv_third_party(Vulkan-Loader
 # KosmicKrisp (spec U-MAC2), Mesa's Vulkan driver on Metal, from the LunarG Vulkan SDK for macOS
 # (the zip holds the SDK's installer application). The post-install step runs the installer into
 # the build tree and copies the driver lib/libvulkan_kosmickrisp.dylib, its manifest
-# share/vulkan/icd.d/libkosmickrisp_icd.json (library_path ../../../lib/<driver>) and
-# bin/vulkaninfo; the SDK's MoltenVK is never installed. The SDK has no licence text of its own
-# components; Licenses/LICENSE.txt (LunarG's statement) is copied from the installed SDK; the MIT
-# text and the copyright notices from Mesa (the commit VERSIONS.txt names) are supplements below.
+# share/vulkan/icd.d/libkosmickrisp_icd.json (library_path ../../../lib/<driver>),
+# bin/vulkaninfo and the validation layer (entry Vulkan-ValidationLayers); the SDK's MoltenVK is
+# never installed. The SDK has no licence text of its own components; Licenses/LICENSE.txt
+# (LunarG's statement) is copied from the installed SDK; the MIT text and the copyright notices
+# from Mesa (the commit VERSIONS.txt names) are supplements below.
 # The expression lists everything compiled into the driver: Mesa (MIT), Berkeley SoftFloat
 # (BSD-3-Clause), xxHash (BSD-2-Clause), the non-endorsement clause of Mesa's util/hash_table.c
 # and set.c (X11) and BLAKE3 (its upstream choice of licences).
@@ -236,6 +180,114 @@ dvv_licence_supplement(vulkaninfo
     URL https://raw.githubusercontent.com/KhronosGroup/Vulkan-Tools/6fe2055cf2fa921d52a4c6a31528cfc279a6977f/LICENSE.txt
     SHA256 cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30)
 
+# Vulkan validation layer (spec §5, §12): loaded by the Vulkan loader in Debug builds and tests
+# only, never shipped. LunarG's prebuilt layer from the Vulkan SDK 1.4.363.1 (U-CI1), not a source
+# build: the source build and its SPIRV-Tools took most of a cold CI prefix. The SDK pins layer
+# commit 317cff060893 with SPIRV-Tools ef96ed763b43 and SPIRV-Headers 496543121ce6 (its
+# VERSIONS.txt); the last two and Vulkan-Utility-Libraries are linked into the layer, bundled in
+# its source are parallel_hashmap (Apache-2.0), xxhash.h (BSD-2-Clause), inplace_function.h
+# (BSL-1.0) and VMA (MIT). The Windows build also embeds mimalloc (MIT). Linux: the SDK tarball (one
+# top folder 1.4.363.1, dropped on extraction); Windows: the SDK installer, whose first payload
+# segment (Bin/, the top folder dropped) CMake's libarchive reads; the installer is never run. The
+# post-install step installs only the layer and its manifest and removes the rest of the SDK. The
+# archives hold no licence text of the layer: Linux has LunarG's statement LICENSE.txt, Windows
+# nothing (its post-install step keeps the layer's LICENSE.txt supplement); the texts are the
+# supplements below.
+dvv_third_party(Vulkan-ValidationLayers
+    VERSION 1.4.363.1
+    URL https://sdk.lunarg.com/sdk/download/1.4.363.1/linux/vulkan_sdk.tar.xz
+    SHA256 b7867d8ca658563813af666f34b93db87f1b1c7d9d69d97e924c210c7ba33eb8
+    SPDX "Apache-2.0 AND BSD-2-Clause AND BSL-1.0 AND MIT"
+    LINKAGE runtime
+    LICENSE_FILES LICENSE.txt
+    ONLY_ON Linux
+    PREBUILT
+    POST_INSTALL post-install/Vulkan-ValidationLayers.cmake)
+
+dvv_third_party(Vulkan-ValidationLayers
+    VERSION 1.4.363.1
+    URL https://sdk.lunarg.com/sdk/download/1.4.363.1/windows/vulkan_sdk.exe
+    SHA256 c02932bd9a968b22d404536108adaacac908c081cd6b0113f5bfefc523dd0a6a
+    SPDX "Apache-2.0 AND BSD-2-Clause AND BSL-1.0 AND MIT"
+    LINKAGE runtime
+    LICENSE_FILES vulkan-validationlayers/LICENSE.txt
+    ONLY_ON Windows
+    PREBUILT
+    POST_INSTALL post-install/Vulkan-ValidationLayers.cmake)
+
+# macOS: the layer of the SDK kosmickrisp installs; kosmickrisp's post-install step copies it.
+dvv_third_party(Vulkan-ValidationLayers
+    VERSION 1.4.363.1
+    URL https://sdk.lunarg.com/sdk/download/1.4.363.1/mac/vulkan_sdk.zip
+    SHA256 a65c707cf0a32bf8c2ca6b9af1985b7af61dbadfc19b352dae51a323f3a547a6
+    SPDX "Apache-2.0 AND BSD-2-Clause AND BSL-1.0 AND MIT"
+    LINKAGE runtime
+    LICENSE_FILES Licenses/LICENSE.txt
+    ONLY_ON Darwin
+    DEPENDS kosmickrisp
+    PREBUILT)
+
+# The layer's licence texts from the commits the SDK names. On Windows LICENSE.txt is the entry's
+# licence file (kept by the post-install step), so it is not attached a second time there.
+dvv_licence_supplement(Vulkan-ValidationLayers
+    FILE vulkan-validationlayers/LICENSE.txt
+    COMPONENT Vulkan-ValidationLayers
+    VERSION 317cff0608
+    URL https://raw.githubusercontent.com/KhronosGroup/Vulkan-ValidationLayers/317cff060893783f96d4174f50491e6374eb3714/LICENSE.txt
+    SHA256 db3010170b904cb7212ef6abd2336f316bf735060eeeca23f1a737f459cc73e4
+    PLATFORMS Linux Darwin)
+dvv_licence_supplement(Vulkan-ValidationLayers
+    FILE vulkan-validationlayers/LICENSES/Apache-2.0.txt
+    COMPONENT Vulkan-ValidationLayers
+    VERSION 317cff0608
+    URL https://raw.githubusercontent.com/KhronosGroup/Vulkan-ValidationLayers/317cff060893783f96d4174f50491e6374eb3714/LICENSES/Apache-2.0.txt
+    SHA256 074e6e32c86a4c0ef8b3ed25b721ca23aca83df277cd88106ef7177c354615ff)
+dvv_licence_supplement(Vulkan-ValidationLayers
+    FILE vulkan-validationlayers/LICENSES/BSD-2-Clause.txt
+    COMPONENT Vulkan-ValidationLayers
+    VERSION 317cff0608
+    URL https://raw.githubusercontent.com/KhronosGroup/Vulkan-ValidationLayers/317cff060893783f96d4174f50491e6374eb3714/LICENSES/BSD-2-Clause.txt
+    SHA256 017b5ee48f680e82cba79141c7895a1f02b856df2512225f5c427fe36765ef0b)
+dvv_licence_supplement(Vulkan-ValidationLayers
+    FILE vulkan-validationlayers/LICENSES/BSL-1.0.txt
+    COMPONENT Vulkan-ValidationLayers
+    VERSION 317cff0608
+    URL https://raw.githubusercontent.com/KhronosGroup/Vulkan-ValidationLayers/317cff060893783f96d4174f50491e6374eb3714/LICENSES/BSL-1.0.txt
+    SHA256 84c6ef3ea9e3254a54d0acf5d3e0c61ae011b8fef7dd6940591cf060e6380a8f)
+dvv_licence_supplement(Vulkan-ValidationLayers
+    FILE vulkan-validationlayers/LICENSES/LLVM-exception.txt
+    COMPONENT Vulkan-ValidationLayers
+    VERSION 317cff0608
+    URL https://raw.githubusercontent.com/KhronosGroup/Vulkan-ValidationLayers/317cff060893783f96d4174f50491e6374eb3714/LICENSES/LLVM-exception.txt
+    SHA256 e34c58338bd89d43e709e226610d8f32b3e3c47f4ad9a99a8dc1d4ac7842488e)
+dvv_licence_supplement(Vulkan-ValidationLayers
+    FILE vulkan-validationlayers/LICENSES/MIT.txt
+    COMPONENT Vulkan-ValidationLayers
+    VERSION 317cff0608
+    URL https://raw.githubusercontent.com/KhronosGroup/Vulkan-ValidationLayers/317cff060893783f96d4174f50491e6374eb3714/LICENSES/MIT.txt
+    SHA256 b05785f9f18e6716bab63424b11454513b9943a222595b70411009202fc592b5)
+dvv_licence_supplement(Vulkan-ValidationLayers
+    FILE spirv-tools/LICENSE
+    COMPONENT SPIRV-Tools
+    VERSION ef96ed763b
+    URL https://raw.githubusercontent.com/KhronosGroup/SPIRV-Tools/ef96ed763b43b59b33b31b362f09a02b729fa1c9/LICENSE
+    SHA256 cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30)
+dvv_licence_supplement(Vulkan-ValidationLayers
+    FILE spirv-headers/LICENSE
+    COMPONENT SPIRV-Headers
+    VERSION 496543121c
+    URL https://raw.githubusercontent.com/KhronosGroup/SPIRV-Headers/496543121ce6419f23d6fa5d7194ba66c36212d2/LICENSE
+    SHA256 ea43b1de38a6f90c488800d66dec1ed671e68cda530266bc96951fb5b6307613)
+# mimalloc: the version the layer's scripts/known_good.json pins for its Windows build (the
+# Windows layer's debug information names mimalloc 3.5); the Linux and macOS layers contain none.
+dvv_licence_supplement(Vulkan-ValidationLayers
+    FILE mimalloc/LICENSE
+    COMPONENT mimalloc
+    VERSION 3.5.3
+    URL https://raw.githubusercontent.com/microsoft/mimalloc/d4881d338125e1cb7c47ba4cfb398d6f7c0c8d45/LICENSE
+    SHA256 82ade5d7d9b029044b5fbbc326207fc47c2d44ee4dd71e8a559c36d728217de9
+    PLATFORMS Windows)
+
 # wxWidgets (spec §2, §10.2), static. MSVC builds Debug and Release (Debug builds of rawreel link the
 # /MDd libraries); Debug objects carry their debug information (/Z7, no separate PDB, so a Debug
 # consumer link shows no LNK4099), Release objects none. Regex, XML, image formats other than PNG,
@@ -243,6 +295,8 @@ dvv_licence_supplement(vulkaninfo
 # always contains a JPEG-derived colour quantizer (IJG), an ImageMagick/libXpm-derived XPM decoder
 # (X11) and Unicode CLDR-derived language tables (Unicode-DFS-2016); nanosvg is bundled (Zlib).
 # wxUSE_APPLE_IEEE is off: its extended.c has a licence without an SPDX id.
+# Every wx entry installs into its own prefix <prefix>-wx (SEPARATE_PREFIX), which CI caches apart
+# and the superbuild skips while its marker matches (deps/CMakeLists.txt).
 # The genex is escaped once, because ExternalProject evaluates its arguments in the superbuild:
 # wx receives $<$<CONFIG:Debug>:Embedded>.
 dvv_third_party(wxWidgets
@@ -257,6 +311,7 @@ AND Zlib AND libpng-2.0"
                   misc/languages/data/unicode/unicode-license.txt 3rdparty/nanosvg/LICENSE.txt
                   src/zlib/LICENSE src/png/LICENSE
     ONLY_ON Windows
+    SEPARATE_PREFIX wx
     CONFIGS Debug Release
     CMAKE_ARGS -DwxBUILD_TOOLKIT=msw -DwxBUILD_SHARED=OFF -DwxBUILD_USE_STATIC_RUNTIME=OFF
                -DwxBUILD_SAMPLES=OFF -DwxBUILD_TESTS=OFF -DwxBUILD_DEMOS=OFF -DwxBUILD_INSTALL=ON
@@ -285,6 +340,7 @@ AND Zlib"
     LICENSE_FILES docs/licence.txt docs/lgpl.txt src/jpeg/README src/common/xpmdecod.cpp
                   misc/languages/data/unicode/unicode-license.txt 3rdparty/nanosvg/LICENSE.txt
     ONLY_ON Linux
+    SEPARATE_PREFIX wx
     CMAKE_ARGS -DwxBUILD_TOOLKIT=gtk3 -DwxBUILD_SHARED=OFF
                -DwxBUILD_SAMPLES=OFF -DwxBUILD_TESTS=OFF -DwxBUILD_DEMOS=OFF -DwxBUILD_INSTALL=ON
                -DwxBUILD_CXX_STANDARD=17
@@ -312,6 +368,7 @@ AND Zlib AND libpng-2.0"
                   misc/languages/data/unicode/unicode-license.txt 3rdparty/nanosvg/LICENSE.txt
                   src/zlib/LICENSE src/png/LICENSE
     ONLY_ON Darwin
+    SEPARATE_PREFIX wx
     CMAKE_ARGS -DwxBUILD_TOOLKIT=osx_cocoa -DwxBUILD_SHARED=OFF
                -DwxBUILD_SAMPLES=OFF -DwxBUILD_TESTS=OFF -DwxBUILD_DEMOS=OFF -DwxBUILD_INSTALL=ON
                -DwxBUILD_CXX_STANDARD=17

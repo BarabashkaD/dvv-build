@@ -31,4 +31,21 @@ if(NOT flat MATCHES "presets consistency: line [0-9]+ differs"
    OR NOT flat MATCHES "Visual Studio 17 2022")
     message(FATAL_ERROR "presets drift: the check failed without naming the differing line:\n${out}")
 endif()
+# A toolchain preset that drops the wxWidgets prefix fails in both files' own check.
+file(READ "${app_presets}" text)
+set(from [=[libs/_third_party/msvc;${sourceDir}/libs/_third_party/msvc-wx"]=])
+string(FIND "${text}" "${from}" pos)
+if(pos EQUAL -1)
+    message(FATAL_ERROR "presets drift: ${app_presets} has no ${from}; update this test")
+endif()
+string(REPLACE "${from}" [=[libs/_third_party/msvc"]=] text "${text}")
+file(WRITE "${copy}" "${text}")
+execute_process(COMMAND "${CMAKE_COMMAND}" "-DAPP_PRESETS=${copy}"
+                        -P "${CMAKE_CURRENT_LIST_DIR}/test_presets_consistency.cmake"
+                RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE out)
+string(REGEX REPLACE "\n +" " " flat "${out}")
+if(rc EQUAL 0 OR NOT flat MATCHES "lacks the CMAKE_PREFIX_PATH of msvc")
+    message(FATAL_ERROR "presets drift: a preset without the wxWidgets prefix was not "
+                        "rejected:\n${out}")
+endif()
 message(STATUS "presets drift: the edited copy is rejected as expected")

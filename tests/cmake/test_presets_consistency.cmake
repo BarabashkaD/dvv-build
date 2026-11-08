@@ -53,6 +53,30 @@ foreach(check IN ITEMS "lib|${LIB_PRESETS}|lib_text" "app|${APP_PRESETS}|app_tex
     endif()
 endforeach()
 
+# Every toolchain preset searches the prefix and, after it, the wxWidgets prefix next to it
+# (_third_party/<toolchain>-wx, which CI caches on its own).
+foreach(check IN ITEMS "${LIB_PRESETS}|lib_text|${lib_root}" "${APP_PRESETS}|app_text|${app_root}")
+    string(REPLACE "|" ";" check "${check}")
+    list(GET check 0 file)
+    list(GET check 1 var)
+    list(GET check 2 root)
+    foreach(toolchain IN ITEMS msvc clang appleclang)
+        set(item "\"CMAKE_PREFIX_PATH\": \"${root}/_third_party/${toolchain};\
+${root}/_third_party/${toolchain}-wx\"")
+        string(FIND "${${var}}" "${item}" pos)
+        if(pos EQUAL -1)
+            message(FATAL_ERROR "presets consistency: ${file} lacks the CMAKE_PREFIX_PATH of "
+                                "${toolchain}: ${item}")
+        endif()
+    endforeach()
+    string(REGEX MATCHALL "\"CMAKE_PREFIX_PATH\":" paths "${${var}}")
+    list(LENGTH paths count)
+    if(NOT count EQUAL 3)
+        message(FATAL_ERROR "presets consistency: ${file} sets CMAKE_PREFIX_PATH ${count} times, "
+                            "not once per toolchain")
+    endif()
+endforeach()
+
 # The macOS presets (Apple Silicon) must exist in both files with their cache variables.
 foreach(check IN ITEMS "${LIB_PRESETS}|lib_text|${lib_root}" "${APP_PRESETS}|app_text|${app_root}")
     string(REPLACE "|" ";" check "${check}")
@@ -67,7 +91,6 @@ foreach(check IN ITEMS "${LIB_PRESETS}|lib_text|${lib_root}" "${APP_PRESETS}|app
         [=["name": "ninja-macos-small",]=]
         [=["rhs": "Darwin"]=]
         [=["generator": "Ninja Multi-Config"]=]
-        "\"CMAKE_PREFIX_PATH\": \"${root}/_third_party/appleclang\""
         "\"CMAKE_BUILD_RPATH\": \"${root}/_third_party/appleclang/lib\""
         [=["CMAKE_OSX_DEPLOYMENT_TARGET": "27.0"]=]
         [=["CMAKE_OSX_ARCHITECTURES": "arm64"]=]

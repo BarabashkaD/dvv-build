@@ -5,6 +5,49 @@ versions follow semantic versioning with the dvv rules: compatible = the same ma
 minimum version, also for 0.x; breaking changes only in a new major, after a deprecation. This file is
 the release notes (there are no GitHub Releases).
 
+## [0.3.0] - 2026-11-08
+
+CI speed-up: the Vulkan validation layer is no longer built from source, wxWidgets has its own
+prefix that CI caches on its own, and the reusable workflow primes the caches once per OS. In
+dvv-build's own CI a cold Windows job took about 8.5 minutes instead of about 24 (the bootstrap
+alone was about 24 minutes on Windows, 16 on Linux and 10 on macOS before); a warm run takes
+2 minutes 52 seconds wall time, the prime jobs 11 to 28 seconds. A warm rawreel run went from
+about 46 minutes (mostly clang-tidy) to about 15.
+
+### Changed
+- The validation layer is LunarG's prebuilt layer from Vulkan SDK 1.4.363.1 on all three systems
+  (the Linux tarball and the Windows installer layouts; on macOS the SDK archive that already
+  supplies KosmicKrisp). It is a 1.4.363 build against the 1.4.365 headers the prefix holds, so it
+  only lacks checks for the newest extensions. The Linux layer is LunarG's build instead of one
+  built here with the XCB, Xlib and Wayland WSI options. Its licence texts (the layer, SPIRV-Tools,
+  SPIRV-Headers and, where it is embedded, mimalloc) are pinned supplements in
+  `deps/licenses/Vulkan-ValidationLayers-supplement/`, checked by SHA256.
+- wxWidgets installs into `<root>/_third_party/<toolchain>-wx` (`SEPARATE_PREFIX` in
+  `dvv_third_party()`), marked with `dvv-inputs.sha256`, the hash of its inputs
+  (`tools/separate-prefix-hash.cmake`). The superbuild skips wxWidgets while the marker matches
+  and removes the stale root-level `lib/cmake/wxWidgets*` package that 0.2.0 installed. Bootstrap
+  takes its fast path only when the prefix stamp and the wxWidgets marker are both current;
+  `--force` (`-Force`) also removes the wxWidgets prefix.
+- The presets' `CMAKE_PREFIX_PATH` has two elements, the prefix and its `-wx` sibling. A consumer
+  that passes its own `CMAKE_PREFIX_PATH` must add the sibling.
+- CI (`dvv-ci.yml`): a prime job per OS (`prime-windows`, `prime-linux`, `prime-macos`) restores or
+  builds the third-party prefix and a wxWidgets cache keyed on its inputs and the compiler; the
+  build jobs only restore and take bootstrap's fast path. The job names of the build jobs are
+  unchanged. The `lint` job no longer runs clang-tidy: the new `tidy` job does, after `prime-linux`,
+  one clang-tidy per core.
+  A repository whose rules require `lint` should also require `tidy`.
+- Windows: configuring the superbuild needs CMake 4.3.2 or newer (it reads the LunarG installer
+  with the bundled libarchive); older versions stop with a message.
+
+### Removed
+- Building SPIRV-Headers, SPIRV-Tools and Vulkan-Utility-Libraries, and the source build of the
+  validation layer.
+
+### Notes
+- Upgrading a 0.2.0 dvv root: delete `<root>/_third_party/<toolchain>` once and run bootstrap
+  with `--force` (`-Force`). `--force` alone removes only the build tree and the wxWidgets prefix,
+  so the files of the 0.2.0 source-built layer and the SPIRV libraries would stay in the prefix.
+
 ## [0.2.0] - 2026-11-07
 
 macOS on Apple Silicon (macOS 27 or newer). The Windows and Linux builds, presets and notices are
