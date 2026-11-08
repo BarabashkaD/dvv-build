@@ -168,6 +168,18 @@ cmake -S "$dvv_build/deps" -B "$build" -G Ninja "-DCMAKE_C_COMPILER=$c_compiler"
     "-DCMAKE_CXX_COMPILER=$compiler" "-DDVV_THIRD_PARTY_PREFIX=$prefix" \
     "-DDVV_BUNDLE_FFMPEG=$bundle_ffmpeg" "-DCMAKE_PROJECT_INCLUDE=$dvv_build/cmake/DvvEpBase.cmake" \
     $superbuild_args
-cmake --build "$build" --config Release --parallel
+# CMake's downloader does not retry HTTP errors, and download servers (GitHub's among them) answer
+# 503 or 504 at times. A failed build is run again, up to three times in all: the steps that
+# finished are stamped, so only the failed ones (usually a download) run again.
+attempt=1
+until cmake --build "$build" --config Release --parallel; do
+    if [ "$attempt" -ge 3 ]; then
+        echo "The third-party build failed $attempt times." >&2
+        exit 1
+    fi
+    echo "The third-party build failed (attempt $attempt of 3); running it again in 30 seconds." >&2
+    attempt=$((attempt + 1))
+    sleep 30
+done
 printf '%s' "$hash" > "$stamp"
 echo "Third-party dependencies for $toolchain installed."
