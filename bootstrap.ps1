@@ -146,6 +146,15 @@ switch ($Toolchain) {
     'clang' { $configure += @('-G', 'Ninja', '-DCMAKE_C_COMPILER=clang-19', '-DCMAKE_CXX_COMPILER=clang++-19') }
 }
 Invoke-Native cmake $configure
-Invoke-Native cmake @('--build', $build, '--config', 'Release', '--parallel')
+# CMake's downloader does not retry HTTP errors, and download servers (GitHub's among them) answer
+# 503 or 504 at times. A failed build is run again, up to three times in all: the steps that
+# finished are stamped, so only the failed ones (usually a download) run again.
+for ($attempt = 1; ; $attempt++) {
+    & cmake --build $build --config Release --parallel
+    if ($LASTEXITCODE -eq 0) { break }
+    if ($attempt -ge 3) { throw "The third-party build failed $attempt times." }
+    Write-Warning "The third-party build failed (attempt $attempt of 3); running it again in 30 seconds."
+    Start-Sleep -Seconds 30
+}
 Set-Content -Path $stamp -Value $hash -NoNewline
 Write-Host "Third-party dependencies for $Toolchain installed."

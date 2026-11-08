@@ -5,6 +5,15 @@ versions follow semantic versioning with the dvv rules: compatible = the same ma
 minimum version, also for 0.x; breaking changes only in a new major, after a deprecation. This file is
 the release notes (there are no GitHub Releases).
 
+## [0.3.1] - 2026-11-08
+
+### Fixed
+- `bootstrap.sh` and `bootstrap.ps1` run a failed third-party build again, up to three times in
+  all, 30 seconds apart. CMake's downloader does not retry HTTP errors, and GitHub answered 503
+  and 504 to the CI runners' downloads of pinned archives at times (the first run of 0.3.0 on
+  `main` failed so in every prime job, twice). The finished steps are stamped, so a retry repeats
+  only the failed ones, usually a download.
+
 ## [0.3.0] - 2026-11-08
 
 CI speed-up: the Vulkan validation layer is no longer built from source, wxWidgets has its own
