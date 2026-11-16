@@ -90,6 +90,74 @@ if(APPLE)
     endif()
     list(APPEND DVV_TEST_ENVIRONMENT "VK_DRIVER_FILES=set:${test_driver}")
 endif()
+# Linux AddressSanitizer: the Vulkan loader unloads the layers when an instance is destroyed. Memory
+# that a layer still references from its own globals then looks lost to LeakSanitizer, which runs at
+# exit and scans only the modules still loaded: the CI runs reported it as intermittent direct and
+# indirect leaks with "<unknown module>" frames, in no code of ours. So every test preloads a small
+# helper (written and built here, without sanitizers) that opens lavapipe, Mesa's device_select
+# layer and the prefix's validation layer with RTLD_NODELETE: they stay loaded until exit, their
+# memory stays reachable, and leak checking stays complete with no suppressions. RTLD_LOCAL keeps
+# their symbols out of the global scope (the validation layer exports vkGetInstanceProcAddr).
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND "address" IN_LIST DVV_SANITIZE)
+    set(keep_loaded "")
+    foreach(name IN ITEMS vulkan_lvp VkLayer_MESA_device_select)
+        find_library(DVV_KEEP_LOADED_${name} ${name} NO_CACHE)
+        if(DVV_KEEP_LOADED_${name})
+            list(APPEND keep_loaded "${DVV_KEEP_LOADED_${name}}")
+        endif()
+    endforeach()
+    find_file(DVV_VALIDATION_LAYER_MANIFEST VkLayer_khronos_validation.json PATHS ${CMAKE_PREFIX_PATH}
+              PATH_SUFFIXES share/vulkan/explicit_layer.d NO_DEFAULT_PATH NO_CACHE)
+    if(DVV_VALIDATION_LAYER_MANIFEST)
+        file(READ "${DVV_VALIDATION_LAYER_MANIFEST}" manifest)
+        string(JSON library ERROR_VARIABLE json_error GET "${manifest}" layer library_path)
+        # A library_path with a slash is relative to the manifest; a bare name is looked up by
+        # dlopen, the same way as the loader does it.
+        if(NOT json_error AND library MATCHES "/")
+            cmake_path(GET DVV_VALIDATION_LAYER_MANIFEST PARENT_PATH manifest_dir)
+            cmake_path(ABSOLUTE_PATH library BASE_DIRECTORY "${manifest_dir}" NORMALIZE)
+        endif()
+        if(NOT json_error)
+            list(APPEND keep_loaded "${library}")
+        endif()
+    endif()
+    if(keep_loaded)
+        set(helper_dir "${CMAKE_BINARY_DIR}/dvv-keep-loaded")
+        file(CONFIGURE OUTPUT "${helper_dir}/dvv_keep_loaded.c" @ONLY CONTENT [[
+/* Written by dvv-build's DvvCompilerOptions.cmake; preloaded into the Linux ASan tests. Opens each
+   library that DVV_KEEP_LOADED names (colon-separated) so that it stays loaded until exit. */
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+__attribute__((constructor)) static void dvv_keep_loaded(void) {
+    const char *list = getenv("DVV_KEEP_LOADED");
+    if (list == NULL) return;
+    char *copy = strdup(list), *save = NULL;
+    for (char *name = strtok_r(copy, ":", &save); name != NULL; name = strtok_r(NULL, ":", &save)) {
+        if (dlopen(name, RTLD_NOW | RTLD_LOCAL | RTLD_NODELETE) == NULL)
+            fprintf(stderr, "dvv_keep_loaded: %s\n", dlerror());
+    }
+    free(copy);
+}
+]])
+        set(helper "${helper_dir}/libdvv_keep_loaded.so")
+        if(NOT EXISTS "${helper}" OR "${helper_dir}/dvv_keep_loaded.c" IS_NEWER_THAN "${helper}")
+            execute_process(COMMAND "${CMAKE_CXX_COMPILER}" -x c -O2 -fPIC -shared
+                                    "${helper_dir}/dvv_keep_loaded.c" -o "${helper}" -ldl
+                            RESULT_VARIABLE status ERROR_VARIABLE error)
+            if(NOT status EQUAL 0)
+                file(REMOVE "${helper}")
+                message(FATAL_ERROR "Building ${helper} failed:\n${error}")
+            endif()
+        endif()
+        list(JOIN keep_loaded ":" keep_loaded)
+        list(APPEND DVV_TEST_ENVIRONMENT "LD_PRELOAD=set:${helper}"
+                                         "DVV_KEEP_LOADED=set:${keep_loaded}")
+    endif()
+endif()
 
 # Maps the parent of the top-level source tree (a library's dvv root, or the folder holding the app)
 # out of __FILE__ and std::source_location so binaries carry no machine path.

@@ -5,6 +5,30 @@ versions follow semantic versioning with the dvv rules: compatible = the same ma
 minimum version, also for 0.x; breaking changes only in a new major, after a deprecation. This file is
 the release notes (there are no GitHub Releases).
 
+## [0.4.2] - 2026-11-16
+
+Linux AddressSanitizer tests no longer fail on memory of unloaded Vulkan layers.
+
+### Fixed
+- The `linux-clang-asan` GPU tests failed now and then with LeakSanitizer reports (direct leaks of
+  128 bytes, indirect leaks of 56 and 112 bytes from threads) whose frames were all
+  `<unknown module>`, in no dvv code. The Vulkan loader unloads the layers when an instance is
+  destroyed; memory a layer still references from its own globals then looks lost to
+  LeakSanitizer, which runs at exit and scans only the modules still loaded. Under
+  `DVV_SANITIZE` with `address` on Linux, `DvvCompilerOptions.cmake` now builds a small helper
+  (without sanitizers) and adds it to `DVV_TEST_ENVIRONMENT` as `LD_PRELOAD`, with
+  `DVV_KEEP_LOADED` naming lavapipe, Mesa's `device_select` layer and the prefix's validation
+  layer. The helper opens them with `RTLD_NODELETE | RTLD_LOCAL`: they stay loaded until exit,
+  none of their symbols joins the global scope, and leak checking stays complete with no
+  suppressions. Tests get it through `ENVIRONMENT_MODIFICATION "${DVV_TEST_ENVIRONMENT}"`, as
+  before. Evidence: four rawreel `main` runs in a row failed this way; two diagnostic runs with the
+  modules kept loaded passed all 73 tests (the libraries' included) with no leak report.
+
+### Added
+- Test `dvv_build.keep_loaded` (Linux; skipped elsewhere): the environment exists only under
+  AddressSanitizer, names the prefix's layer, and the helper keeps a library loaded after its
+  last `dlclose`.
+
 ## [0.4.1] - 2026-11-16
 
 macOS CI works on GitHub's `xcode-27-arm64` image 20261112 again.

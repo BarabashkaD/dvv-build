@@ -58,6 +58,11 @@ add_test(NAME dvv_build.test_driver
          COMMAND ${CMAKE_COMMAND} -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/test-driver-test
                  -DGENERATOR=${CMAKE_GENERATOR}
                  -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/test_test_driver.cmake)
+# Linux only (it skips elsewhere): the AddressSanitizer tests keep the Vulkan driver and layers loaded.
+add_test(NAME dvv_build.keep_loaded
+         COMMAND ${CMAKE_COMMAND} -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/keep-loaded-test
+                 -DCXX=${CMAKE_CXX_COMPILER} -DGENERATOR=${CMAKE_GENERATOR}
+                 -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/test_keep_loaded.cmake)
 add_test(NAME dvv_build.privacy_lint
          COMMAND ${CMAKE_COMMAND} -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/privacy-lint-test
                  -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/privacy/test_privacy_lint.cmake)
