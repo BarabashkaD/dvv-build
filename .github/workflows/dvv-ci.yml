@@ -333,6 +333,17 @@ jobs:
       - *checkout-dvv-build
       - *setup-python
       - *install-tools
+      # Before the keys: the SDK's version is part of the wxWidgets key. The selected Xcode's own
+      # macOS SDK for every later step. A plain xcrun can pick the Command Line Tools' SDK, which
+      # an image may update past the selected Xcode (xcode-27 20261112: CLT MacOSX27.2.sdk with
+      # Xcode 27.1, which then cannot read it); with SDKROOT the Xcode and its SDK always match.
+      - &macos-sdk
+        name: Select the SDK of the selected Xcode
+        shell: bash
+        run: |
+          sdk=$(xcrun --sdk macosx --show-sdk-path)
+          echo "SDKROOT=$sdk" >> "$GITHUB_ENV"
+          echo "Xcode $(xcode-select -p), SDK $sdk ($(SDKROOT=$sdk xcrun --show-sdk-version))"
       - *keys-unix
       - *lookup-wx
       - *lookup-prefix
@@ -486,6 +497,7 @@ jobs:
       - *setup-python
       - *install-tools
       - *fetch-deps
+      - *macos-sdk
       - *keys-unix
       - *restore-wx
       - *restore-prefix
