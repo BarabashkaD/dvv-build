@@ -5,6 +5,20 @@ versions follow semantic versioning with the dvv rules: compatible = the same ma
 minimum version, also for 0.x; breaking changes only in a new major, after a deprecation. This file is
 the release notes (there are no GitHub Releases).
 
+## [0.4.1] - 2026-11-16
+
+macOS CI works on GitHub's `xcode-27-arm64` image 20261112 again.
+
+### Fixed
+- The `prime-macos` and `macos` CI jobs failed at their cache keys with `SDK
+  "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk" cannot be located`. The image moved the
+  host and the Command Line Tools to macOS 27.2 (`MacOSX.sdk` -> `MacOSX27.2.sdk`) and left Xcode
+  27.1 selected; a plain `xcrun` picks the Command Line Tools' SDK, which Xcode 27.1 cannot read. A
+  first step now sets `SDKROOT` for the job to the selected Xcode's own macOS SDK
+  (`xcrun --sdk macosx --show-sdk-path`), so the Xcode and its SDK always match. The SDK version
+  is part of the wxWidgets cache key: if it differs from the one earlier runs used, the first run
+  builds a new wxWidgets entry.
+
 ## [0.4.0] - 2026-11-08
 
 macOS CI runs the GPU tests. GitHub's `xcode-27` runners have no Metal device that KosmicKrisp can
