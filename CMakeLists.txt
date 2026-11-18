@@ -72,6 +72,22 @@ add_test(NAME dvv_build.fetch_deps
 add_test(NAME dvv_build.check_pins
          COMMAND ${CMAKE_COMMAND} -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/check-pins-test
                  -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/test_check_pins.cmake)
+add_test(NAME dvv_build.os_suffixes
+         COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/test_os_suffixes.cmake)
+add_test(NAME dvv_build.os_sources
+         COMMAND ${CMAKE_COMMAND} -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/os-sources-test
+                 -DGENERATOR=${CMAKE_GENERATOR}
+                 -DPLATFORM=${CMAKE_GENERATOR_PLATFORM}
+                 -DMAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}
+                 -DCXX=${CMAKE_CXX_COMPILER}
+                 -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/test_os_sources.cmake)
+set_tests_properties(dvv_build.os_sources PROPERTIES TIMEOUT 300)
+add_test(NAME dvv_build.os_blocks
+         COMMAND ${CMAKE_COMMAND} -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/os-blocks-test
+                 -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/test_os_blocks.cmake)
+add_test(NAME dvv_build.tidy_files
+         COMMAND ${CMAKE_COMMAND} -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/tidy-files-test
+                 -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/test_tidy_files.cmake)
 # Cycle labels: `sanity` marks the fast inner-loop subset (ctest --preset vs2026-sanity); `package`
 # marks install and consumer tests, which only the full cycle runs (vs2026-small excludes them).
 set_property(TEST dvv_build.presets_consistency dvv_build.spdx dvv_build.third_party_gate

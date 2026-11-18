@@ -3,8 +3,9 @@
 #           jobs: { ci: { uses: <owner>/dvv-build/.github/workflows/dvv-ci.yml@v<X>,
 #                         with: { repo: <library name> } } }
 #         where X is the dvv-build line of its dvv-deps.txt (check-pins.cmake checks it). The dvv
-#         root is the workspace: <library>/, dvv-build/ at tag v<X>, and the dependencies that
-#         fetch-deps.cmake clones at their minimum tags.
+#         root is the workspace: <library>/, dvv-build/ at this workflow's commit (tag v<X>), and
+#         the dependencies that fetch-deps.cmake clones at their minimum tags. A library branch may
+#         call it @<dvv-build branch> to test against unreleased dvv-build; check-pins fails then.
 #   app   an application with the dvv repositories as submodules in libs/ adds `app: true`
 #         (and `test-dependencies` to run the libraries' tests at the pins). The dvv root is
 #         <app>/libs and dvv-build is the pinned libs/dvv-build.
@@ -12,8 +13,9 @@
 # Every job installs the tools of the dvv-build in use (CMake 4) before it runs a dvv-build script.
 # Jobs: dvv-build-min, then per OS a prime job (prime-windows, prime-linux, prime-macos) that fills
 # the toolchain's wxWidgets and third-party caches, then that OS's build jobs (windows, linux,
-# macos), which only restore them. Libraries and applications also get lint (privacy lint, Format,
-# check-pins; no prime job) and tidy (clang-tidy on the Linux Clang build, after prime-linux).
+# macos), which only restore them. Libraries and applications also get lint (privacy lint,
+# OS blocks, Format, check-pins; no prime job) and tidy (clang-tidy on the files of the Linux
+# Clang compile database, after prime-linux).
 name: dvv-ci
 
 on:
@@ -122,7 +124,9 @@ jobs:
         if: env.DVV_LAYOUT == 'lib'
         with:
           repository: ${{ github.repository_owner }}/dvv-build
-          ref: v${{ needs.dvv-build-min.outputs.version }}
+          # The commit of this workflow: @v<X> on main (check-pins), a dvv-build branch while a
+          # dependent tests against it before the tag exists. The tag where job.workflow_sha is absent.
+          ref: ${{ job.workflow_sha || format('v{0}', needs.dvv-build-min.outputs.version) }}
           path: dvv-build
       - &setup-python
         uses: actions/setup-python@v6
@@ -595,10 +599,13 @@ jobs:
       - *install-tools
       - name: Privacy lint
         run: cmake "-DREPO=${{ inputs.repo }}" -DMODE=commits -P "$DVV_BUILD/tools/privacy-lint.cmake"
+      - name: OS blocks
+        if: ${{ !cancelled() }}
+        run: cmake "-DREPO=${{ inputs.repo }}" -P "$DVV_BUILD/tools/os-blocks.cmake"
       - name: Format
         if: ${{ !cancelled() }}
         working-directory: ${{ inputs.repo }}
-        run: git ls-files -z '*.h' '*.cpp' | xargs -0 -r clang-format --dry-run --Werror
+        run: git ls-files -z '*.h' '*.cpp' '*.mm' | xargs -0 -r clang-format --dry-run --Werror
       # Last, so that the steps above run and report while a branch-only override or an untagged pin
       # exists; the job then fails here. lib: the workflows' dvv-build @vX = the dvv-build line, no
       # override; app: the pins are the tagged releases, relative submodule URLs, @vX = the pinned
@@ -638,14 +645,17 @@ jobs:
           cmake --build --preset ninja-clang
       - name: Tidy
         working-directory: ${{ inputs.repo }}
-        # bash with pipefail: a failing git ls-files must fail the step, not check nothing.
+        # bash with pipefail: a failing list must fail the step, not check nothing.
         shell: bash
         run: |
-          # ** reaches src subfolders; * stops at '/' for tests and tools, so tests/compile_fail and
-          # tests/package (built separately) stay out. Windows-only sources (*_win32.cpp, *_msw.cpp)
-          # are not in the Linux compile database. One clang-tidy per core, two files each: one serial
-          # run was most of the job's time; xargs exits non-zero when any run reports an error.
-          git ls-files -z ':(glob)src/**/*.cpp' ':(glob)tests/*.cpp' ':(glob)tools/*.cpp' \
-              ':(exclude,glob)**/*_win32.cpp' ':(exclude,glob)**/*_msw.cpp' |
-            xargs -0 -r -P "$(nproc)" -n 2 \
-              clang-tidy -p "$GITHUB_WORKSPACE/$DVV_ROOT/_build/$DVV_REPO/ninja-clang" --quiet
+          # The list is the files of the compile database that are tracked and match the source
+          # globs (tools/tidy-files.cmake), so other OSes' sources drop out without being named.
+          # The tool path is absolute: this step runs in the repository and $DVV_BUILD is relative
+          # to the workspace. The list is printed in a collapsed group so the log shows the Linux
+          # Tidy list. One clang-tidy per core, two files each: one serial run was most of the
+          # job's time; xargs exits non-zero when any run reports an error.
+          cmake "-DDB=$GITHUB_WORKSPACE/$DVV_ROOT/_build/$DVV_REPO/ninja-clang/compile_commands.json" \
+                -DREPO=. "-DOUT=$RUNNER_TEMP/tidy-files.txt" -P "$GITHUB_WORKSPACE/$DVV_BUILD/tools/tidy-files.cmake"
+          echo "::group::Tidy files"; cat "$RUNNER_TEMP/tidy-files.txt"; echo "::endgroup::"
+          tr '\n' '\0' < "$RUNNER_TEMP/tidy-files.txt" |
+            xargs -0 -r -P "$(nproc)" -n 2 clang-tidy -p "$GITHUB_WORKSPACE/$DVV_ROOT/_build/$DVV_REPO/ninja-clang" --quiet

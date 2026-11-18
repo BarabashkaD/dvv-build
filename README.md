@@ -3,9 +3,9 @@
 The shared build infrastructure of the `dvv` libraries and of the applications that use them: CMake
 presets, the shared compiler options (`DvvCompilerOptions.cmake`), the dependency rules
 (`dvv-deps.txt`, `DvvDeps.cmake`), the bootstrap scripts, the
-third-party superbuild with its licence gate, the tools (`fetch-deps`, `check-pins`, privacy lint,
-sanity cycles) and the reusable CI workflow. dvv-build is versioned (`VERSION`) and tagged like the
-libraries.
+third-party superbuild with its licence gate, the per-OS file selection (`DvvOsSources.cmake`), the
+tools (`fetch-deps`, `check-pins`, privacy lint, `os-blocks`, `tidy-files`, sanity cycles) and the
+reusable CI workflow. dvv-build is versioned (`VERSION`) and tagged like the libraries.
 
 ## Repositories
 
@@ -55,7 +55,7 @@ Each library and application lists its dvv dependencies in `dvv-deps.txt`, in de
 
 ```text
 # dvv dependencies: <repository> <minimum version>, dependency order (read by dvv-build).
-dvv-build 0.4.2
+dvv-build 0.5.0
 dvv-base 0.1.0
 dvv-platform 0.1.0
 ```
@@ -80,6 +80,88 @@ dvv-platform 0.1.0
 - A pushed tag is never moved; a fix is a new patch release.
 - Each repository's `CHANGELOG.md` is its release notes; the libraries and dvv-build have no
   GitHub Releases.
+
+## Names
+
+| suffix | the one role | examples that fit (snapshot) |
+|---|---|---|
+| Options | inputs of a create/open/load call, given once; defaults inside the struct | SessionOptions, ContextOptions, FfmpegLoadOptions; PlayerOptions, GpuInstanceOptions |
+| Config | a section of a persisted, user-editable file (applications only) | rawreel IoConfig, LogConfig |
+| Params | values fed to one computation or pass, possibly per frame | ColourParams (the resolved colour for the maths), CompositeParams; PresentFrameParams |
+| Desc | an immutable description used to create or interpret a resource, frame or layout ("Descriptor" only for Vulkan descriptor sets) | FrameDesc, PlaneDesc, BufferDesc; PixelFormatDesc |
+| Info | read-only facts about an existing thing, reported at run time or declared in a static catalog | GpuInfo, SourceInfo, ComponentInfo, rawreel CommandInfo; detail::LibraryInfo, ContainerInfo |
+| Request | an ask that another part answers or resolves later; never the resolved answer | SourceRequest (an asynchronous open), ViewRequest (resolved by the renderer) |
+| Choice | a selection made among alternatives, by the user or by a resolver | rawreel FormatChoice, ColourChoice, StandardChoice; ValidationChoice |
+| Spec | a value that selects or identifies (a key part, a query as written) | ViewSpec, ColourSpec |
+| Hint | advisory knowledge a resolver may use or override (Guess: a provider's own inference, handed to its own open()) | FormatHint, FileHint, Bt601Hint; FormatGuess |
+| Context | the environment handed to one call or one dialog (executors, store, what the callee may use); the GPU `ExecutionContext` is the glossary's exception | OpenContext, ProduceContext, ConvertContext, rawreel FormatDialogContext |
+| Entry | one element of a list or table that its container owns | ProviderEntry, dvv-base SinkEntry, rawreel LogEntry, ZoomMenuEntry; LibraryEntry |
+| Record | one item a store writes or updates in place | LogRecord, TypeRecord |
+| Status / Stats | Status = a snapshot of state or availability handed out; Stats = counters | SessionStatus, FfmpegStatus, ComponentStatus, rawreel VulkanStatus; TierStats, TypeStats |
+| State | mutable state an object keeps for itself (not handed out as a snapshot) | rawreel DisplayState, LoaderState, the GUI `*State` types |
+| Report | a value assembled to be printed | rawreel VersionReport, BenchReport |
+| Schema | the description of the parameters a component accepts | ParameterSchema |
+| Settings, Facts | not used (prose says "Options for" an Options struct, not "Settings for") | - |
+
+A type named after a user-facing file format keeps the format's name, whatever its suffix. `ClipDescription` is the parsed "clip description" sidecar that the rawreel README documents.
+
+Glossary:
+- registry: a set of registered entries looked up by id. Two types fit: `ComponentRegistry` (plug-ins by id) and `LifetimeRegistry` (managed objects registered at creation, by `ObjectId`). The Vulkan instance is `GpuInstance`.
+- component: a registered plug-in (dvv-registry, dvv-components) or a pixel channel (dvv-media `ComponentKind`, `ComponentDesc`). Both are domain terms, always qualified by namespace.
+- context: the per-call environment of the Context row. `gpu::ExecutionContext` is the GPU device context, a domain term of GPU APIs, and a `ConvertContext` holds one as `gpu`.
+- key: a lookup key (`FrameKey`, `BufferKey`). `CreationKey` is the C++ passkey idiom, a domain term of the language.
+- parameter: a named, user-settable value of a component (dvv-registry `ParameterValue`). It is not the `Params` suffix.
+- descriptor: only a Vulkan descriptor set. A pixel format is a `PixelFormatDesc`, returned by `formatDesc()`, and the registry's static node is a "registration node".
+- lease: a scoped, move-only access right released by its owner (dvv-media). `ResourcePoolStats::leased` goes with the pool API.
+- log record and log entry: a dvv-base `LogRecord` is one message as written. A rawreel `LogEntry` is the log store's own copy of one, with a sequence number (Record and Entry rows).
+- window system and surface: a window system is named by the window system (Win32, Xlib, Cocoa), and a surface by its graphics API (Metal).
+- OS words: a portable mode is named by what it does on every OS. An OS mechanism's name (`DllDirectory`) is used only where only that OS has it.
+- `<name>_<backend>` file pairs: one name, one suffix per OS or backend (viewport_window.h with `viewport_<os>`).
+
+Misfits (names that break a rule and are kept or queued for renaming): `PresentFrameInfo`; Metal/Cocoa; `PlayerConfig`, `SessionStatus::inflight`, rawreel native_window.h; `ValidationRequest`, `LibraryFacts`, `ContainerFacts`, the loader's `LibraryInfo`, the registry's "descriptor" prose; `PixelFormatDescriptor`, `descriptor()`, `dvv_components_link`; `GpuRegistry`, `GpuRegistryOptions`, `ExecutionContext::registry()`, "Settings for"; `DllDirectory`; `ResourcePoolStats::leased`.
+
+## Per-OS code
+
+Per-OS code lives in files with a suffix: `<stem>_<suffix>.cpp`, `.mm` or `.h`. The suffix names the
+OS, the window system or the toolkit backend. `cmake/DvvOsSources.cmake` holds the three lists, one
+per platform, and `dvv_os_sources` selects the files of the platform being built:
+
+```cmake
+include(DvvOsSources)
+dvv_os_sources(<target> [OPTIONAL] <stem>...)
+```
+
+- Windows (`WIN32`): `win32`, `msw`.
+- macOS (`APPLE`): `posix`, `macos`, `metal`, `cocoa`.
+- Other (Linux and the rest): `posix`, `linux`, `xlib`, `gtk`.
+- `stub` is the fallback, used when the platform has no file for a stem.
+
+A platform builds every file of its list that exists for the stem (`posix` and `macos` layer on
+macOS). A stem with no file and no stub, and a call without a stem, fail at configure time;
+`OPTIONAL` allows a stem that only some platforms have. `.mm` files are compiled with `-fobjc-arc`.
+The queries `dvv_os_all_suffixes`, `dvv_os_suffixes_for` and `dvv_os_suffixes` return the lists.
+
+A shared file (no per-OS suffix) may hold an OS `#if` block of at most 5 lines, with a comment and
+the same types on every branch. A block of only includes, pragmas and `#error` lines is free at any
+length; a `#define` is code. Each layer has one selector vocabulary: CMake selects by `WIN32`,
+`APPLE` or other, the gui C++ by the wxWidgets toolkit macro, all other C++ by the OS macro.
+
+The gate counts a condition as an OS group when it names `_WIN32`, `__APPLE__`, `__linux__`, `TARGET_OS_*`, `__WXMSW__`, `__WXOSX__*` or `__WXGTK__`; other conditions (for example `_MSC_VER`, `__unix__`) are not OS groups.
+
+`tools/os-blocks.cmake` is the gate (the lint step "OS blocks"). It checks only the length; the
+comment, the same types and the selector vocabulary are review items. In the tracked `*.h`, `*.cpp`
+and `*.mm` files outside `tests/` that have no per-OS suffix, it counts the OS `#if` blocks over 5
+lines that hold code, and compares the counts with `os-blocks.txt` in the repository (one row per
+file with its block count). The baseline may only shrink; a missing file is an empty baseline.
+It skips character literals and raw string literals (any prefix, across lines) when it looks for code
+lines, and fails when git quotes a tracked path (the message says to rename it).
+`cmake -DREPO=<repo dir> -DMODE=write -P dvv-build/tools/os-blocks.cmake` rewrites it.
+
+Windows-only and macOS-only files are not tidied, because Tidy runs on Linux.
+`tools/tidy-files.cmake` builds Tidy's file list from the compile database of `ninja-clang`, so a
+repository's preset keeps `CMAKE_EXPORT_COMPILE_COMMANDS` on.
+`tidy-files` fails when git quotes a tracked path, and when a tracked path or a compile-database path
+contains `;`; a path with `[` or `]` is listed like any other.
 
 ## Prerequisites
 
@@ -122,7 +204,7 @@ dvv-platform 0.1.0
 
 ```powershell
 git clone <base>/dvv-gpu
-git clone --branch v0.4.2 <base>/dvv-build      # the dvv-build line of dvv-gpu/dvv-deps.txt
+git clone --branch v0.5.0 <base>/dvv-build      # the dvv-build line of dvv-gpu/dvv-deps.txt
 git -C dvv-build config user.name <GitHub handle>
 git -C dvv-build config user.email <GitHub noreply e-mail>
 python -m pip install -r dvv-build/tools/requirements.txt
@@ -219,7 +301,9 @@ dvv-base 0.1.0 @0123456789abcdef0123456789abcdef01234567
 
 `fetch-deps` then fetches exactly that commit instead of tag `v<minimum>` and checks that its
 version still meets the minimum; an existing folder must be checked out at that commit. The
-`dvv-build` line takes no override. Notes:
+`dvv-build` line takes no override: a library branch tests against an unreleased dvv-build by calling
+`dvv-ci.yml@<dvv-build branch or commit>` instead (CI checks dvv-build out at the workflow's own
+commit; `check-pins` fails the same way). Notes:
 
 - It needs `dvv-build 0.1.2` or later on the library's `dvv-build` line, together with the workflow
   `@v0.1.2`.
@@ -248,15 +332,16 @@ concurrency:                      # newer PR pushes cancel older runs; a running
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   ci:
-    uses: <owner>/dvv-build/.github/workflows/dvv-ci.yml@v0.4.2   # = the dvv-build line
+    uses: <owner>/dvv-build/.github/workflows/dvv-ci.yml@v0.5.0   # = the dvv-build line
     with:
       repo: dvv-gpu
 ```
 
-- Library (lib layout): reads the `dvv-build` line, checks out dvv-build at that tag, runs
-  `fetch-deps` with `DVV_GIT_BASE_URL` = the caller's account, so the libraries' minimum versions
-  are tested. Lint: privacy lint, clang-format, then `check-pins` (lib mode); tidy: clang-tidy on the
-  Linux Clang build. A fork needs
+- Library (lib layout): reads the `dvv-build` line, checks out dvv-build at the commit of the called
+  `dvv-ci.yml` (`job.workflow_sha`, which is tag `v<X>` for `@v<X>`; the line's tag where
+  `job.workflow_sha` is absent), runs `fetch-deps` with `DVV_GIT_BASE_URL` = the caller's account,
+  so the libraries' minimum versions are tested. Lint: privacy lint, OS blocks, clang-format (`*.h`, `*.cpp`, `*.mm`), then `check-pins`
+  (lib mode); tidy: clang-tidy on the files of the Linux Clang compile database. A fork needs
   the dvv repositories under its own account.
 - Application: `app: true` (submodules checked out recursively; `check-pins` in app mode), and
   `test-dependencies: true` to run every library's tests at the pins.
@@ -372,6 +457,10 @@ dvv-build's own tests (`cmake --workflow --preset vs2026` in dvv-build runs them
 | `dvv_build.dvv_deps` | `cmake -DWORK_DIR=<dir> -DGENERATOR=Ninja -P tests/cmake/test_dvv_deps.cmake` | `dvv_dependencies()` in lib and app layouts |
 | `dvv_build.fetch_deps` | `cmake -DWORK_DIR=<dir> -P tests/tools/test_fetch_deps.cmake` | `tools/fetch-deps.cmake` (local bare repositories) |
 | `dvv_build.check_pins` | `cmake -DWORK_DIR=<dir> -P tests/tools/test_check_pins.cmake` | `tools/check-pins.cmake` (local bare repositories) |
+| `dvv_build.os_suffixes` | `cmake -P tests/cmake/test_os_suffixes.cmake` | the suffix lists, the union, `dvv_os_suffixes_for` and `dvv_os_suffixes` |
+| `dvv_build.os_sources` | `cmake -DWORK_DIR=<dir> -DGENERATOR=Ninja -DMAKE_PROGRAM=<ninja> -DCXX=<compiler> -P tests/cmake/test_os_sources.cmake` | `dvv_os_sources` in fixture projects (selection, layering, stub, `OPTIONAL`, `.mm`) |
+| `dvv_build.os_blocks` | `cmake -DWORK_DIR=<dir> -P tests/tools/test_os_blocks.cmake` | `tools/os-blocks.cmake` (fixture git repositories) |
+| `dvv_build.tidy_files` | `cmake -DWORK_DIR=<dir> -P tests/tools/test_tidy_files.cmake` | `tools/tidy-files.cmake` (fixture compile databases) |
 | `dvv_build.wx_consumer` | CTest only (label `package`) | a wxWidgets consumer builds and runs against the prefix |
 | `dvv_build.ffmpeg_sdk` | CTest only (label `package`) | a `dvv_ffmpeg_sdk` consumer builds, and its `ffmpeg` is an LGPL build |
 
