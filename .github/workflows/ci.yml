@@ -60,6 +60,10 @@ jobs:
         run: cmake "-DWORK_DIR=${{ runner.temp }}/fetch-deps-test" -P tests/tools/test_fetch_deps.cmake
       - name: check-pins tests
         run: cmake "-DWORK_DIR=${{ runner.temp }}/check-pins-test" -P tests/tools/test_check_pins.cmake
+      - name: os-blocks tests
+        run: cmake "-DWORK_DIR=${{ runner.temp }}/os-blocks-test" -P tests/tools/test_os_blocks.cmake
+      - name: tidy-files tests
+        run: cmake "-DWORK_DIR=${{ runner.temp }}/tidy-files-test" -P tests/tools/test_tidy_files.cmake
       - name: Privacy lint
         run: cmake "-DREPO=${{ github.workspace }}" -DMODE=commits -P tools/privacy-lint.cmake
 

@@ -30,6 +30,7 @@
     {
       "name": "ninja-clang",
       "displayName": "Linux, Clang 19",
+      "description": "CMAKE_EXPORT_COMPILE_COMMANDS stays ON: the CI Tidy step reads this preset's compile database (tools/tidy-files.cmake)",
       "inherits": "dvv-base-settings",
       "generator": "Ninja Multi-Config",
       "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" },

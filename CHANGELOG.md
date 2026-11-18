@@ -5,6 +5,39 @@ versions follow semantic versioning with the dvv rules: compatible = the same ma
 minimum version, also for 0.x; breaking changes only in a new major, after a deprecation. This file is
 the release notes (there are no GitHub Releases).
 
+## [0.5.0] - 2026-11-19
+
+The per-OS file rule and its checks, and the naming vocabulary.
+
+### Added
+- `cmake/DvvOsSources.cmake`: one suffix list per platform (`DVV_OS_SUFFIXES_WIN32`, `_APPLE`,
+  `_OTHER`, `DVV_OS_SUFFIX_FALLBACK`), the queries `dvv_os_all_suffixes`, `dvv_os_suffixes_for`
+  and `dvv_os_suffixes`, and `dvv_os_sources(<target> [OPTIONAL] <stem>...)`, which adds this
+  platform's `<stem>_<suffix>.{cpp,mm}` (several when layered), else `<stem>_stub.cpp`; `.mm`
+  files get `-fobjc-arc`; a call without a stem fails. dvv-base installs it next to
+  `DvvCompilerOptions.cmake`.
+- `tools/os-blocks.cmake` and the lint step "OS blocks": an OS `#if` block over 5 lines with code
+  in a file without a per-OS suffix fails, against `os-blocks.txt` in the repository (one row per
+  file with its block count), which may only shrink (a missing file is an empty baseline). It
+  skips character literals and raw string literals (any prefix, across lines) when it looks for
+  code lines, and fails when git quotes a tracked path ("rename it").
+- `tools/tidy-files.cmake`: Tidy's file list is the compile database ∩ tracked files ∩ the source
+  globs, so no per-OS file of another platform reaches clang-tidy. It fails when git quotes a tracked
+  path ("rename it") and when a tracked path or a compile-database path contains `;`; a path with
+  `[` or `]` is listed like any other.
+- README "Names" (suffix roles, glossary, known misfits) and "Per-OS code" (the rule).
+
+### Changed
+- Format also checks `*.mm`.
+- Tidy no longer excludes `*_win32.cpp` / `*_msw.cpp` by name. It reads `ninja-clang`'s compile
+  database; a repository's preset must keep `CMAKE_EXPORT_COMPILE_COMMANDS` on.
+- Lib layout: CI checks dvv-build out at the commit of the called `dvv-ci.yml` (`job.workflow_sha`),
+  which is tag `v<X>` for `@v<X>`. A library branch can call `@<dvv-build branch>` to test against
+  unreleased dvv-build; `check-pins` fails until it is back on a tag.
+
+Adopting: a repository that raises its dvv-build line to 0.5.0 commits `os-blocks.txt` (written by
+`-DMODE=write`) and reformats its `.mm` files in the same commit.
+
 ## [0.4.2] - 2026-11-16
 
 Linux AddressSanitizer tests no longer fail on memory of unloaded Vulkan layers.
