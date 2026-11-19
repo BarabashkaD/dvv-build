@@ -332,7 +332,7 @@ concurrency:                      # newer PR pushes cancel older runs; a running
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   ci:
-    uses: <owner>/dvv-build/.github/workflows/dvv-ci.yml@v0.5.0   # = the dvv-build line
+    uses: <owner>/dvv-build/.github/workflows/dvv-ci.yml@v0.5.1   # = the dvv-build line
     with:
       repo: dvv-gpu
 ```
@@ -342,7 +342,18 @@ jobs:
   `job.workflow_sha` is absent), runs `fetch-deps` with `DVV_GIT_BASE_URL` = the caller's account,
   so the libraries' minimum versions are tested. Lint: privacy lint, OS blocks, clang-format (`*.h`, `*.cpp`, `*.mm`), then `check-pins`
   (lib mode); tidy: clang-tidy on the files of the Linux Clang compile database. A fork needs
-  the dvv repositories under its own account.
+  the dvv repositories under its own account. A fork of dvv-build sets `DVV_CI_IMAGE_OWNER` to pull
+  the upstream image, or mirrors the image under its own account with the same digest. A fork PR that
+  changes the image is published by a maintainer.
+- Linux image: the Linux build jobs and tidy run in `ghcr.io/<owner>/dvv-build-ci`, pinned by digest in `dvv-ci.yml`.
+  The image holds the packages of `ci-image/packages.txt` from a pinned Ubuntu snapshot, and the
+  Python 3.13 build of setup-python with the tools of `tools/requirements.txt`. The image is public.
+  The inputs of the image are the tracked files of `ci-image/`, `tools/requirements.txt`,
+  `tools/ci-image-inputs.cmake` and the publish workflow `.github/workflows/ci-image.yml`.
+  A changed input needs a new image (`ci-image.yml`) and its digest in `dvv-ci.yml`. Package versions
+  tagged `inputs-*` are never deleted. Their steps use `$GITHUB_WORKSPACE` and `$RUNNER_TEMP`, not the
+  `github.workspace` and `runner.temp` expressions. The lint job runs on the host (setup-python and
+  the tools of `tools/requirements.txt` from PyPI): pulling the image took longer than the job.
 - Application: `app: true` (submodules checked out recursively; `check-pins` in app mode), and
   `test-dependencies: true` to run every library's tests at the pins.
 - dvv-build's own `ci.yml` runs the script tests on Windows and Linux (`tools`) and the reusable
@@ -350,7 +361,7 @@ jobs:
 - macOS GPU tests: the `macos` jobs run them on the prefix's KosmicKrisp when the runner's Metal
   device can run it. GitHub's `xcode-27` runners cannot, so `tools/select-vulkan-driver.cmake`
   installs Mesa's lavapipe from Homebrew's `mesa` bottle instead (CI only, never in the prefix or a
-  package; unpinned, as Linux CI's apt lavapipe) and the tests run on it through
+  package; unpinned; Linux CI's lavapipe comes from the CI image) and the tests run on it through
   `DVV_TEST_VK_DRIVER_FILES`, required and with synchronization validation as on Linux. The display
   tests run only on KosmicKrisp with a desktop session. A prefix without KosmicKrisp, a failed
   `brew install mesa` (three attempts) or a lavapipe without a Vulkan 1.4 device fails the job, and
@@ -366,6 +377,9 @@ The third-party prefix comes from two caches per toolchain `<tc>`:
   and SDK versions);
 - the rest, `<root>/_third_party/<tc>`, keyed on `deps/**`, `cmake/DvvThirdParty.cmake` and
   `cmake/DvvSpdx.cmake` (the inputs of bootstrap's up-to-date stamp).
+
+On Linux, the wxWidgets and prefix keys also end with the first 16 hex digits of the CI image's
+environment hash.
 
 A prime job per OS (`prime-windows`, `prime-linux`, `prime-macos`) looks both keys up without
 downloading and stops when both exist; otherwise it restores what exists, bootstraps and saves what
@@ -451,6 +465,8 @@ dvv-build's own tests (`cmake --workflow --preset vs2026` in dvv-build runs them
 | `dvv_build.third_party_versions` | `cmake -P tests/deps/test_versions.cmake` | every declaration in `deps/versions.cmake` passes the gate; the per-platform and shipped sets |
 | `dvv_build.superbuild_scripts` | `cmake -DWORK_DIR=<dir> -P tests/deps/test_superbuild_scripts.cmake` | the scripts the superbuild runs (`deps/*.cmake`) |
 | `dvv_build.check_vulkan_device` | `cmake -DWORK_DIR=<dir> -P tests/ci/test_check_vulkan_device.cmake` | `tools/check-vulkan-device.cmake` |
+| `dvv_build.ci_image_inputs` | `cmake -DWORK_DIR=<dir> -P tests/ci/test_ci_image_inputs.cmake` | `tools/ci-image-inputs.cmake` |
+| `dvv_build.check_ci_image` | `cmake -DWORK_DIR=<dir> -P tests/ci/test_check_ci_image.cmake` | `tools/check-ci-image.cmake` on saved facts |
 | `dvv_build.privacy_lint` | `cmake -DWORK_DIR=<dir> -P tests/privacy/test_privacy_lint.cmake` | `tools/privacy-lint.cmake` |
 | `dvv_build.presets_consistency` | `cmake -P tests/cmake/test_presets_consistency.cmake` | lib and app preset files describe the same presets |
 | `dvv_build.presets_consistency_drift` | `cmake -DWORK_DIR=<dir> -P tests/cmake/test_presets_consistency_drift.cmake` | that check fails on an edited copy |
