@@ -1,0 +1,190 @@
+# Publishes the prebuilt Linux CI image to GHCR as ghcr.io/<owner>/dvv-build-ci. The image is built
+# from ci-image/ by ci-image/build.sh, checked with tools/check-ci-image.cmake, pushed by digest, and
+# then tagged inputs-<h16>, where <h16> is the first 16 digits of the inputs hash
+# (tools/ci-image-inputs.cmake). A run whose tag already exists builds and pushes nothing.
+#
+# Two-commit flow: the first commit changes the image inputs and publishes the image from this
+# workflow. The second commit copies the job summary's `DVV_CI_IMAGE: dvv-build-ci@<digest>` line
+# into dvv-ci.yml, which pins the image by digest.
+#
+# A version tagged inputs-* is never deleted, because releases pin it by digest. Untagged versions
+# come from a lost race or a failed run, and may be cleaned up.
+name: ci-image
+
+on:
+  push:
+    branches: ['**']
+    paths:
+      - ci-image/**
+      - tools/requirements.txt
+      - tools/ci-image-inputs.cmake
+      - tools/check-ci-image.cmake
+      - .github/workflows/ci-image.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: ci-image
+  cancel-in-progress: false
+
+jobs:
+  image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Install the Python tools
+        timeout-minutes: 15
+        run: |
+          python -m pip install --retries 10 --timeout 60 -r tools/requirements.txt
+      - name: Inputs
+        id: inputs
+        env:
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          out=$(cmake -P tools/ci-image-inputs.cmake)
+          h=${out#hash=}
+          if [[ ! $h =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::the inputs hash is not 64 hex digits: $out"
+            exit 1
+          fi
+          {
+            echo "h=$h"
+            echo "h16=${h:0:16}"
+            echo "repo=ghcr.io/${OWNER,,}/dvv-build-ci"
+          } >> "$GITHUB_OUTPUT"
+      - name: Log in
+        env:
+          ACTOR: ${{ github.actor }}
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          printf '%s' "$TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+      - name: Look up
+        id: lookup
+        env:
+          REPO: ${{ steps.inputs.outputs.repo }}
+          H16: ${{ steps.inputs.outputs.h16 }}
+        run: |
+          set -uo pipefail
+          ref="$REPO:inputs-$H16"
+          err=$(mktemp)
+          if out=$(docker buildx imagetools inspect "$ref" --format '{{ .Manifest.Digest }}' 2>"$err"); then
+            if [[ $out =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "exists=true" >> "$GITHUB_OUTPUT"
+              echo "digest=$out" >> "$GITHUB_OUTPUT"
+            else
+              echo "::error::lookup of $ref returned no digest: $out"
+              exit 1
+            fi
+          elif grep -qxF "ERROR: $ref: not found" "$err"; then
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::lookup of $ref failed: $out $(cat "$err")"
+            exit 1
+          fi
+      - name: Build
+        if: steps.lookup.outputs.exists != 'true'
+        env:
+          DVV_CI_IMAGE_INPUTS: ${{ steps.inputs.outputs.h }}
+          DVV_CI_IMAGE_SOURCE: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          set -uo pipefail
+          for attempt in 1 2 3; do
+            ci-image/build.sh load dvv-build-ci:local && exit 0
+            echo "build attempt $attempt failed"
+          done
+          exit 1
+      - name: Check the image
+        if: steps.lookup.outputs.exists != 'true'
+        run: |
+          docker run --rm --user "$(id -u):$(id -g)" -v "$GITHUB_WORKSPACE:/w" -e GITHUB_WORKSPACE=/w \
+            dvv-build-ci:local cmake -DDVV_BUILD=/w -P /w/tools/check-ci-image.cmake
+      - name: Push
+        id: push
+        if: steps.lookup.outputs.exists != 'true'
+        env:
+          REPO: ${{ steps.inputs.outputs.repo }}
+          DVV_CI_IMAGE_INPUTS: ${{ steps.inputs.outputs.h }}
+          DVV_CI_IMAGE_SOURCE: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          set -uo pipefail
+          for attempt in 1 2 3; do
+            if out=$(ci-image/build.sh push "$REPO"); then
+              echo "$out"
+              digest=$(printf '%s\n' "$out" | sed -n 's/^digest=//p' | tail -n 1)
+              if [[ $digest =~ ^sha256:[0-9a-f]{64}$ ]]; then
+                echo "digest=$digest" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+              echo "::error::no digest in the push output"
+              exit 1
+            fi
+            echo "push attempt $attempt failed"
+          done
+          exit 1
+      - name: Verify the push
+        if: steps.lookup.outputs.exists != 'true'
+        env:
+          REPO: ${{ steps.inputs.outputs.repo }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          set -uo pipefail
+          # Compare the layers' diff ids, not an image ID or a config digest. The local image ID is
+          # the config digest on the classic image store and the manifest digest on the containerd
+          # store, and compressed layer digests change with the compression. The diff ids are the
+          # uncompressed layer digests: they are the same on both stores and under any compression.
+          local_layers=$(docker image inspect dvv-build-ci:local --format '{{json .RootFS.Layers}}' | jq -r '.[]') || exit 1
+          pushed_layers=$(docker buildx imagetools inspect "$REPO@$DIGEST" --format '{{json .Image.RootFS.DiffIDs}}' | jq -r '.[]') || exit 1
+          if [ -z "$local_layers" ] || [ "$pushed_layers" != "$local_layers" ]; then
+            echo "::error::the layers of the pushed image $DIGEST differ from the checked local image"
+            echo "local:"
+            echo "$local_layers"
+            echo "pushed:"
+            echo "$pushed_layers"
+            exit 1
+          fi
+          echo "the pushed image $DIGEST has the layers of the checked image ($(echo "$local_layers" | wc -l) layers)"
+      - name: Tag
+        if: steps.lookup.outputs.exists != 'true'
+        env:
+          REPO: ${{ steps.inputs.outputs.repo }}
+          H16: ${{ steps.inputs.outputs.h16 }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          set -uo pipefail
+          ref="$REPO:inputs-$H16"
+          err=$(mktemp)
+          if out=$(docker buildx imagetools inspect "$ref" --format '{{ .Manifest.Digest }}' 2>"$err"); then
+            if [ "$out" = "$DIGEST" ]; then
+              echo "$ref already names $DIGEST"
+              exit 0
+            fi
+            echo "::error::inputs-$H16 already points to $out; this run's push $DIGEST stays untagged"
+            exit 1
+          elif ! grep -qxF "ERROR: $ref: not found" "$err"; then
+            echo "::error::lookup of $ref failed: $out $(cat "$err")"
+            exit 1
+          fi
+          docker buildx imagetools create --prefer-index=false --tag "$ref" "$REPO@$DIGEST" || exit 1
+          tagged=$(docker buildx imagetools inspect "$ref" --format '{{ .Manifest.Digest }}' 2>/dev/null) || exit 1
+          if [ "$tagged" != "$DIGEST" ]; then
+            echo "::error::inputs-$H16 is $tagged, not the pushed $DIGEST"
+            exit 1
+          fi
+          echo "$ref names $DIGEST"
+      - name: Summary
+        env:
+          DIGEST: ${{ steps.lookup.outputs.exists == 'true' && steps.lookup.outputs.digest || steps.push.outputs.digest }}
+        run: |
+          if [[ ! $DIGEST =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::no valid image digest for the summary: '$DIGEST'"
+            exit 1
+          fi
+          echo "DVV_CI_IMAGE: dvv-build-ci@$DIGEST" >> "$GITHUB_STEP_SUMMARY"

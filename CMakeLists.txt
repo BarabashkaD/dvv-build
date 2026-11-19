@@ -53,6 +53,12 @@ add_test(NAME dvv_build.check_vulkan_device
 add_test(NAME dvv_build.select_vulkan_driver
          COMMAND ${CMAKE_COMMAND} -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/select-vulkan-driver-test
                  -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/ci/test_select_vulkan_driver.cmake)
+add_test(NAME dvv_build.ci_image_inputs
+         COMMAND ${CMAKE_COMMAND} -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/ci-image-inputs-test
+                 -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/ci/test_ci_image_inputs.cmake)
+add_test(NAME dvv_build.check_ci_image
+         COMMAND ${CMAKE_COMMAND} -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/check-ci-image-test
+                 -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/ci/test_check_ci_image.cmake)
 # macOS only (it skips elsewhere): the tests' Vulkan driver, KosmicKrisp or DVV_TEST_VK_DRIVER_FILES.
 add_test(NAME dvv_build.test_driver
          COMMAND ${CMAKE_COMMAND} -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/test-driver-test

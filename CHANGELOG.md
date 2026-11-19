@@ -5,6 +5,36 @@ versions follow semantic versioning with the dvv rules: compatible = the same ma
 minimum version, also for 0.x; breaking changes only in a new major, after a deprecation. This file is
 the release notes (there are no GitHub Releases).
 
+## [0.5.1] - 2026-11-19
+
+Linux CI runs in a prebuilt image: prime-linux, the linux matrix (clang, asan, tsan) and tidy
+install no packages or tools any more. The `lint` job stays on the host (the image pull took longer
+than the job) and installs the Python tools.
+
+### Changed
+- Those jobs (prime-linux, linux-clang, linux-clang-asan, linux-clang-tsan and tidy) run
+  in the public CI image `ghcr.io/<owner>/dvv-build-ci`, which `dvv-ci.yml` pins by digest. The
+  image is Ubuntu 24.04 from a pinned archive snapshot, with clang-19, libstdc++-14, the GTK 3 and X11
+  development packages, Xvfb, Mesa's lavapipe, and setup-python's Python 3.13 build with the tools of
+  `tools/requirements.txt` and the same environment variables. Those jobs no longer run `apt-get`,
+  `actions/setup-python` or `pip`. The tests run as the runner's non-root user, as before. A step
+  "Check the CI image" fails the job when the image's inputs, tools or packages do not match this
+  dvv-build.
+- The Linux wxWidgets and third-party cache keys include the image's environment hash. The first
+  Linux run after the upgrade builds both entries again; the downloaded archives are reused.
+- Windows and macOS: "Install tools" has a 15-minute timeout and pip retries. The macOS jobs no
+  longer run `brew install ninja`; the pinned Ninja from `tools/requirements.txt` was already the
+  one on PATH.
+
+### Added
+- `ci-image/` (Dockerfile, package list, build script), the image's recipe.
+- `.github/workflows/ci-image.yml`, which publishes the image for new inputs.
+- `tools/ci-image-inputs.cmake` (the inputs hash) and `tools/check-ci-image.cmake` (the in-job
+  check). dvv-build's own CI checks that the pinned image is public and is the published image of
+  its inputs.
+
+Adopting: raise the dvv-build line to 0.5.1 and the workflow to `@v0.5.1`; nothing else changes.
+
 ## [0.5.0] - 2026-11-19
 
 The per-OS file rule and its checks, and the naming vocabulary.

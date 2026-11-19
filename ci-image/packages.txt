@@ -1,0 +1,43 @@
+# The Ubuntu packages of the CI image (ci-image/Dockerfile), one per line, in groups. Each group
+# ("## <name>") becomes one image layer, installed with its recommends as `apt-get install -y` does.
+# This is the only list: the Dockerfile installs it, and tools/check-ci-image.cmake checks that each
+# package is installed. It holds the packages the Linux jobs installed on the runner host, plus only
+# the base tools that a bare ubuntu:24.04 lacks and the jobs use.
+
+## base
+# HTTPS downloads of bootstrap.
+ca-certificates
+# git 2.18 or newer: actions/checkout needs it for submodules and history (without it, checkout
+# falls back to a REST download); fetch-deps clones with it; DvvDeps requires it.
+git
+# `shasum -a 256` in the cache-key step; it is in perl, not in the perl-base of a bare image.
+perl
+# actions/cache compresses with zstd when it is present (the method is part of the cache version).
+zstd
+# readelf, the fallback of DVV_READELF, and strip for the validation-layer post-install.
+binutils
+
+## compiler
+# The compiler of the Linux presets (clang++-19) with its sanitizer runtimes and libstdc++ 14.
+clang-19
+libclang-rt-19-dev
+libstdc++-14-dev
+
+## gui
+# Window-system and GUI packages: bootstrap checks them and the build compiles GTK 3 code.
+libgtk-3-dev
+pkgconf
+libx11-dev
+libxcb1-dev
+libxrandr-dev
+libwayland-dev
+zlib1g-dev
+libpng-dev
+
+## display-vulkan
+# The display tests run under Xvfb; the GPU tests run on Mesa's lavapipe (Vulkan 1.4, noble-updates).
+xvfb
+xauth
+mesa-vulkan-drivers
+libvulkan1
+vulkan-tools

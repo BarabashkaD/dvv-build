@@ -1,0 +1,76 @@
+# Sanitizer canaries: LeakSanitizer and ThreadSanitizer work in the CI container.
+# Run: cmake -DSANITIZER=address|thread -DCXX=<clang++> -DWORK_DIR=<scratch dir>
+#            -P tests/ci/test_sanitizers.cmake
+cmake_minimum_required(VERSION 4.2)
+if(NOT DEFINED SANITIZER OR NOT (SANITIZER STREQUAL "address" OR SANITIZER STREQUAL "thread"))
+    message(FATAL_ERROR "pass -DSANITIZER=address or thread")
+endif()
+if(NOT DEFINED CXX)
+    message(FATAL_ERROR "pass -DCXX=<clang++>")
+endif()
+if(NOT DEFINED WORK_DIR)
+    message(FATAL_ERROR "pass -DWORK_DIR=<scratch directory>")
+endif()
+file(REMOVE_RECURSE "${WORK_DIR}")
+file(MAKE_DIRECTORY "${WORK_DIR}")
+
+# Kernel facts that decide whether TSan can map its shadow memory. They can be missing or
+# unreadable for an unprivileged user; then they print "unreadable" and the canary verdict alone
+# decides. The paths can be overridden for tests; -DFACTS_ONLY=ON stops after printing them.
+if(NOT DEFINED PROC_MMAP_FILE)
+    set(PROC_MMAP_FILE /proc/sys/vm/mmap_rnd_bits)
+endif()
+if(NOT DEFINED PROC_PTRACE_FILE)
+    set(PROC_PTRACE_FILE /proc/sys/kernel/yama/ptrace_scope)
+endif()
+foreach(item IN ITEMS "mmap_rnd_bits|${PROC_MMAP_FILE}" "ptrace_scope|${PROC_PTRACE_FILE}")
+    string(REPLACE "|" ";" item "${item}")
+    list(GET item 0 name)
+    list(GET item 1 path)
+    set(value "unreadable")
+    # cat never raises a CMake error on a file that exists but cannot be read.
+    execute_process(COMMAND cat "${path}" RESULT_VARIABLE read_status
+                    OUTPUT_VARIABLE content ERROR_QUIET)
+    string(STRIP "${content}" content)
+    if(read_status EQUAL 0 AND NOT content STREQUAL "")
+        set(value "${content}")
+    endif()
+    message(STATUS "${name}=${value}")
+endforeach()
+if(FACTS_ONLY)
+    return()
+endif()
+
+if(SANITIZER STREQUAL "address")
+    set(source leak.cpp)
+else()
+    set(source race.cpp)
+endif()
+set(exe "${WORK_DIR}/canary")
+execute_process(
+    COMMAND "${CXX}" -g -O1 "-fsanitize=${SANITIZER}" -pthread
+            "${CMAKE_CURRENT_LIST_DIR}/sanitizers/${source}" -o "${exe}"
+    RESULT_VARIABLE status OUTPUT_VARIABLE out ERROR_VARIABLE err)
+if(NOT status EQUAL 0)
+    message(FATAL_ERROR "FAIL: ${CXX} could not build ${source} (${status}):\n${out}${err}")
+endif()
+execute_process(COMMAND "${exe}" RESULT_VARIABLE status OUTPUT_VARIABLE out ERROR_VARIABLE err)
+set(report "${out}${err}")
+message(STATUS "canary exit status ${status}")
+
+if(SANITIZER STREQUAL "address")
+    if(status EQUAL 0)
+        message(FATAL_ERROR "FAIL: the leak canary exited 0; LeakSanitizer did not fail it:\n${report}")
+    endif()
+    if(NOT report MATCHES "detected memory leaks")
+        message(FATAL_ERROR "FAIL: LeakSanitizer did not report 'detected memory leaks':\n${report}")
+    endif()
+else()
+    if(report MATCHES "FATAL: ThreadSanitizer|unexpected memory mapping")
+        message(FATAL_ERROR "FAIL: ThreadSanitizer could not start (memory mapping):\n${report}")
+    endif()
+    if(NOT report MATCHES "WARNING: ThreadSanitizer: data race")
+        message(FATAL_ERROR "FAIL: ThreadSanitizer did not report a data race:\n${report}")
+    endif()
+endif()
+message(STATUS "PASS: ${SANITIZER} sanitizer canary")
