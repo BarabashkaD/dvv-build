@@ -12,9 +12,9 @@ reusable CI workflow. dvv-build is versioned (`VERSION`) and tagged like the lib
 | Repository | Content |
 |---|---|
 | dvv-build | presets, dependency rules, bootstrap, third-party superbuild and licence gate, tools, CI |
-| dvv-base | errors, tasks and executors, logger, lifetime registry and leak check, JSON, URIs, paths |
-| dvv-registry | component registry, capabilities, parameter schemas, component kind check |
-| dvv-platform | native windows, Vulkan surfaces, dynamic libraries, `FileReader` |
+| dvv-base | errors, tasks and executors, logger, lifetime registry and leak check, JSON, URIs, paths, UTF-8 and ASCII text |
+| dvv-registry | component registry, capabilities, modules and their options |
+| dvv-platform | window handles, dynamic libraries, file reading and writing, crash handler |
 | dvv-gpu | Vulkan 1.4 core: devices, buffers and images, submission, Slang shaders, compute pipelines, presentation |
 | dvv-media | pixel-format catalogue, custom JSON formats, frames and the frame store, synthetic, raw and Y4M sources |
 | dvv-components | `dvv_add_component()`, the FFmpeg run-time binding, the `ffmpeg` and `lavfi` sources |
@@ -55,9 +55,9 @@ Each library and application lists its dvv dependencies in `dvv-deps.txt`, in de
 
 ```text
 # dvv dependencies: <repository> <minimum version>, dependency order (read by dvv-build).
-dvv-build 0.5.0
-dvv-base 0.1.0
-dvv-platform 0.1.0
+dvv-build 0.6.0
+dvv-base 0.6.0
+dvv-platform 0.4.0
 ```
 
 - `dvv-build <version>` appears exactly once, anywhere in the file; `dvv-<x> <version>` once per
@@ -67,16 +67,17 @@ dvv-platform 0.1.0
 - `dvv_dependencies()` (`cmake/DvvDeps.cmake`) checks at every configure that each dependency is
   present in the root and meets its minimum, and makes it available; the dependencies build without
   their tests unless `DVV_TEST_DEPENDENCIES` is set.
-- **Transitive minimums:** a repository's minimum for X is at least the minimum for X of each of
-  its dvv dependencies, and it lists every dvv library its dependencies list. `fetch-deps` checks
-  this and names the line to raise.
+- **Transitive minimums:** a repository's minimum for X is on the same 0.minor as, and at least,
+  the minimum for X of each of its dvv dependencies, and it lists every dvv library its
+  dependencies list. `fetch-deps` checks this and names the line to raise or the release to use.
 
 ## Versions
 
-- Semantic versions, `v<major>.<minor>.<patch>` tags. Compatible means the same major and at least
-  the minimum version, **also for 0.x** (unlike the usual SemVer 0.x habit where a minor may break);
-  the package version files use `SameMajorVersion`.
-- A breaking change comes only with a new major; anything removed is deprecated first.
+- Semantic versions, `v<major>.<minor>.<patch>` tags. Compatible means the same 0.minor and at
+  least the minimum version: 0.6.2 meets the minimum 0.6.0, 0.7.0 does not. The package version
+  files use `SameMinorVersion`.
+- A replaced or unused API is removed in the next 0.x minor, with no deprecation period; that
+  release's CHANGELOG names each removal and its replacement.
 - A pushed tag is never moved; a fix is a new patch release.
 - Each repository's `CHANGELOG.md` is its release notes; the libraries and dvv-build have no
   GitHub Releases.
@@ -85,7 +86,7 @@ dvv-platform 0.1.0
 
 | suffix | the one role | examples that fit (snapshot) |
 |---|---|---|
-| Options | inputs of a create/open/load call, given once; defaults inside the struct | SessionOptions, ContextOptions, FfmpegLoadOptions; PlayerOptions, GpuInstanceOptions |
+| Options | inputs of a create/open/load call, given once; defaults inside the struct | SessionOptions, ContextOptions, FfmpegLoadOptions; GpuInstanceOptions |
 | Config | a section of a persisted, user-editable file (applications only) | rawreel IoConfig, LogConfig |
 | Params | values fed to one computation or pass, possibly per frame | ColourParams (the resolved colour for the maths), CompositeParams; PresentFrameParams |
 | Desc | an immutable description used to create or interpret a resource, frame or layout ("Descriptor" only for Vulkan descriptor sets) | FrameDesc, PlaneDesc, BufferDesc; PixelFormatDesc |
@@ -100,7 +101,6 @@ dvv-platform 0.1.0
 | Status / Stats | Status = a snapshot of state or availability handed out; Stats = counters | SessionStatus, FfmpegStatus, ComponentStatus, rawreel VulkanStatus; TierStats, TypeStats |
 | State | mutable state an object keeps for itself (not handed out as a snapshot) | rawreel DisplayState, LoaderState, the GUI `*State` types |
 | Report | a value assembled to be printed | rawreel VersionReport, BenchReport |
-| Schema | the description of the parameters a component accepts | ParameterSchema |
 | Settings, Facts | not used (prose says "Options for" an Options struct, not "Settings for") | - |
 
 A type named after a user-facing file format keeps the format's name, whatever its suffix. `ClipDescription` is the parsed "clip description" sidecar that the rawreel README documents.
@@ -109,16 +109,16 @@ Glossary:
 - registry: a set of registered entries looked up by id. Two types fit: `ComponentRegistry` (plug-ins by id) and `LifetimeRegistry` (managed objects registered at creation, by `ObjectId`). The Vulkan instance is `GpuInstance`.
 - component: a registered plug-in (dvv-registry, dvv-components) or a pixel channel (dvv-media `ComponentKind`, `ComponentDesc`). Both are domain terms, always qualified by namespace.
 - context: the per-call environment of the Context row. `gpu::ExecutionContext` is the GPU device context, a domain term of GPU APIs, and a `ConvertContext` holds one as `gpu`.
-- key: a lookup key (`FrameKey`, `BufferKey`). `CreationKey` is the C++ passkey idiom, a domain term of the language.
-- parameter: a named, user-settable value of a component (dvv-registry `ParameterValue`). It is not the `Params` suffix.
+- key: a lookup key (`FrameKey`). `CreationKey` is the C++ passkey idiom, a domain term of the language.
+- module option: a named text value a module receives at load (dvv-registry `dvv::ModuleValues`, option name to text). It is not the `Params` suffix.
 - descriptor: only a Vulkan descriptor set. A pixel format is a `PixelFormatDesc`, returned by `formatDesc()`, and the registry's static node is a "registration node".
-- lease: a scoped, move-only access right released by its owner (dvv-media). `ResourcePoolStats::leased` goes with the pool API.
+- lease: a scoped, move-only access right released by its owner (dvv-media).
 - log record and log entry: a dvv-base `LogRecord` is one message as written. A rawreel `LogEntry` is the log store's own copy of one, with a sequence number (Record and Entry rows).
 - window system and surface: a window system is named by the window system (Win32, Xlib, Cocoa), and a surface by its graphics API (Metal).
-- OS words: a portable mode is named by what it does on every OS. An OS mechanism's name (`DllDirectory`) is used only where only that OS has it.
+- OS words: a portable mode is named by what it does on every OS. An OS mechanism's name is used only where only that OS has it.
 - `<name>_<backend>` file pairs: one name, one suffix per OS or backend (viewport_window.h with `viewport_<os>`).
 
-Misfits (names that break a rule and are kept or queued for renaming): `PresentFrameInfo`; Metal/Cocoa; `PlayerConfig`, `SessionStatus::inflight`, rawreel native_window.h; `ValidationRequest`, `LibraryFacts`, `ContainerFacts`, the loader's `LibraryInfo`, the registry's "descriptor" prose; `PixelFormatDescriptor`, `descriptor()`, `dvv_components_link`; `GpuRegistry`, `GpuRegistryOptions`, `ExecutionContext::registry()`, "Settings for"; `DllDirectory`; `ResourcePoolStats::leased`.
+Misfits (names that break a rule and are kept): Metal/Cocoa; `PlayerConfig`, `SessionStatus::inflight`; the loader's `LibraryInfo`.
 
 ## Per-OS code
 
@@ -204,7 +204,7 @@ contains `;`; a path with `[` or `]` is listed like any other.
 
 ```powershell
 git clone <base>/dvv-gpu
-git clone --branch v0.5.0 <base>/dvv-build      # the dvv-build line of dvv-gpu/dvv-deps.txt
+git clone --branch v0.6.0 <base>/dvv-build      # the dvv-build line of dvv-gpu/dvv-deps.txt
 git -C dvv-build config user.name <GitHub handle>
 git -C dvv-build config user.email <GitHub noreply e-mail>
 python -m pip install -r dvv-build/tools/requirements.txt
@@ -241,11 +241,14 @@ tests Release; also `ninja-macos-asan`; there is no ThreadSanitizer preset).
   `-BundleFfmpeg OFF` builds application packages without FFmpeg (bash: `--toolchain`, `--force`,
   `--bundle-ffmpeg`; `--toolchain` is `clang` or `appleclang`, the default on macOS).
 - The Vulkan validation layer is LunarG's prebuilt one from the Vulkan SDK 1.4.363.1 on all three
-  systems; SPIRV-Headers, SPIRV-Tools and Vulkan-Utility-Libraries are no longer built. The presets'
-  `CMAKE_PREFIX_PATH` holds both folders, `<root>/_third_party/<toolchain>;<root>/_third_party/<toolchain>-wx`;
-  a consumer that sets its own `CMAKE_PREFIX_PATH` must add the `-wx` sibling.
+  systems. The presets' `CMAKE_PREFIX_PATH` holds both folders,
+  `<root>/_third_party/<toolchain>;<root>/_third_party/<toolchain>-wx`; a consumer that sets its own
+  `CMAKE_PREFIX_PATH` must add the `-wx` sibling.
 - custom_ffmpeg's LGPL shared release is installed into `_third_party/<toolchain>/custom_ffmpeg`.
-  FFmpeg is never linked; CMake projects find it with `find_package(dvv_ffmpeg_sdk CONFIG REQUIRED)`.
+  FFmpeg is never linked; CMake projects find it with `find_package(dvv_ffmpeg_sdk CONFIG REQUIRED)`,
+  which sets `DVV_FFMPEG_PROGRAM`, `DVV_FFMPEG_RUNTIME_DIR` and the target `dvv::ffmpeg_headers`.
+  The release data of custom_ffmpeg and LAME, `DVV_BUNDLE_FFMPEG` and the shipped entries are in
+  `_third_party/<toolchain>/dvv-third-party-state.cmake`.
   The prefix holds `THIRD_PARTY_NOTICES.txt` (what packages ship) and `THIRD_PARTY_NOTICES-all.txt`
   (every dependency, never shipped). Licence texts missing from custom_ffmpeg's archives are kept in
   `deps/licenses/custom_ffmpeg-supplement/`, pinned by SHA256 in `deps/versions.cmake`.
@@ -279,12 +282,14 @@ Inside an application, `libs/dvv-<x>` is the library's own repository, detached 
 4. In the application: `git add libs/dvv-<x>` and commit `build: pin dvv-<x> <version>`. **A pin
    bump is merged only with a green run that includes the lib tests** (the application's CI runs
    them on every push). Raise the application's `dvv-deps.txt` minimum only when it needs the new
-   version.
+   version. A patch release may be pinned without touching the minimum. A new 0.minor needs the
+   application's minimum raised to that line, and the minimum of every pinned library that depends
+   on it raised to the same line. Each such library then needs a release of its own.
 
-A dvv-build change follows the same flow. A library's `dvv-build` line in `dvv-deps.txt` and the
-`@v<X>` of its `ci.yml` move together; `check-pins` (lib mode) checks it:
-`cmake -DREPO=dvv-<x> -DMODE=lib -P dvv-build/tools/check-pins.cmake` in the dvv root, where `REPO`
-is the path of the repository folder.
+A dvv-build change follows the same flow, with the same rule for a new 0.minor. A library's
+`dvv-build` line in `dvv-deps.txt` and the `@v<X>` of its `ci.yml` move together; `check-pins` (lib
+mode) checks it: `cmake -DREPO=dvv-<x> -DMODE=lib -P dvv-build/tools/check-pins.cmake` in the dvv
+root, where `REPO` is the path of the repository folder.
 
 **Main depends on tags only.** On `main`, every `dvv-deps.txt` minimum and every application pin
 is a released tag: `check-pins` fails on an application pin that is not the commit of tag
@@ -296,7 +301,7 @@ a dependency, add ` @<commit>` (the full 40-digit lowercase hash, pushed to the 
 origin) after the version on that dependency's line:
 
 ```text
-dvv-base 0.1.0 @0123456789abcdef0123456789abcdef01234567
+dvv-base 0.6.0 @0123456789abcdef0123456789abcdef01234567
 ```
 
 `fetch-deps` then fetches exactly that commit instead of tag `v<minimum>` and checks that its
@@ -305,8 +310,6 @@ version still meets the minimum; an existing folder must be checked out at that 
 `dvv-ci.yml@<dvv-build branch or commit>` instead (CI checks dvv-build out at the workflow's own
 commit; `check-pins` fails the same way). Notes:
 
-- It needs `dvv-build 0.1.2` or later on the library's `dvv-build` line, together with the workflow
-  `@v0.1.2`.
 - The commit can only be one that is pushed to the dependency's origin.
 - Configure (`DvvDeps`) uses the dependency's folder as it is, so in the side-by-side layout the
   local build follows the clone's current checkout; only `fetch-deps` checks the commit.
@@ -332,7 +335,7 @@ concurrency:                      # newer PR pushes cancel older runs; a running
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   ci:
-    uses: <owner>/dvv-build/.github/workflows/dvv-ci.yml@v0.5.1   # = the dvv-build line
+    uses: <owner>/dvv-build/.github/workflows/dvv-ci.yml@v0.6.0   # = the dvv-build line
     with:
       repo: dvv-gpu
 ```
@@ -367,7 +370,7 @@ jobs:
   `brew install mesa` (three attempts) or a lavapipe without a Vulkan 1.4 device fails the job, and
   a check fails it when the loader loads any other driver or layer. A bad Homebrew bottle: set the
   repository variable `DVV_MACOS_SOFTWARE_GPU` to `off` (or `false`, `0`, `no`; Settings, Secrets and
-  variables, Actions, Variables) and the GPU tests skip on macOS, as before 0.4.0, until a fix is released.
+  variables, Actions, Variables) and the GPU tests skip on macOS until a fix is released.
 
 The third-party prefix comes from two caches per toolchain `<tc>`:
 
@@ -478,7 +481,7 @@ dvv-build's own tests (`cmake --workflow --preset vs2026` in dvv-build runs them
 | `dvv_build.os_blocks` | `cmake -DWORK_DIR=<dir> -P tests/tools/test_os_blocks.cmake` | `tools/os-blocks.cmake` (fixture git repositories) |
 | `dvv_build.tidy_files` | `cmake -DWORK_DIR=<dir> -P tests/tools/test_tidy_files.cmake` | `tools/tidy-files.cmake` (fixture compile databases) |
 | `dvv_build.wx_consumer` | CTest only (label `package`) | a wxWidgets consumer builds and runs against the prefix |
-| `dvv_build.ffmpeg_sdk` | CTest only (label `package`) | a `dvv_ffmpeg_sdk` consumer builds, and its `ffmpeg` is an LGPL build |
+| `dvv_build.ffmpeg_sdk` | CTest only (label `package`) | a `dvv_ffmpeg_sdk` consumer builds, its `ffmpeg` is an LGPL build, and `dvv-third-party-state.cmake` holds the release data |
 
 The privacy lint, `cmake -DREPO=<repo dir> -DMODE=commits -P dvv-build/tools/privacy-lint.cmake`
 (`MODE=tree` for the work tree), also runs in the pre-push hook (`MODE=prepush`) and in CI.

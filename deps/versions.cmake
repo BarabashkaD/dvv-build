@@ -326,7 +326,7 @@ AND Zlib AND libpng-2.0"
 # Linux: Release only (no debug ABI split in libstdc++), GTK 3, the system's zlib and libpng. Options
 # that wx would otherwise detect from installed -dev packages are pinned, so CI runners (which have
 # more of them) build the same library as WSL.
-# wxUSE_WAYLAND is off: rawreel runs GTK on X11 (GDK_BACKEND=x11, Wayland is v1.x), and wx's
+# wxUSE_WAYLAND is off: rawreel runs GTK on X11 (GDK_BACKEND=x11; no Wayland support), and wx's
 # Wayland code compiles MIT-licensed wayland-scanner output, partly generated from the system's
 # wayland-protocols.
 dvv_third_party(wxWidgets
@@ -381,9 +381,9 @@ AND Zlib AND libpng-2.0"
 # FFmpeg (spec §2, §13.2; M4 design D3, §9): the custom_ffmpeg "lgpl" shared release, loaded at run
 # time and never linked. dvv-components compiles against its headers (through dvv_ffmpeg_sdk,
 # written by deps/CMakeLists.txt); its six run-time libraries ship in the Windows package's ffmpeg/
-# folder only with DVV_BUNDLE_FFMPEG (user decision U4); its ffmpeg and ffprobe programs serve the
-# tests as an oracle. The Linux archive is pinned for the clang prefix (headers for the lint and the
-# Linux sanity build); v1.0 has no Linux package (user decision U-WIN; Linux packaging is v1.x).
+# folder only with DVV_BUNDLE_FFMPEG (user decision U4); its ffmpeg program serves the tests as
+# an oracle. The Linux archive is pinned for the clang prefix (headers for the lint and the
+# Linux sanity build); rawreel has no Linux package (user decision U-WIN).
 # Contents: FFmpeg (LGPL-2.1-or-later), LAME (LGPL-2.0-or-later), libvpx, libwebp, Opus, Ogg, Vorbis
 # (BSD-3-Clause), SVT-AV1 (BSD-3-Clause-Clear, with the AOM patent licence), dav1d (BSD-2-Clause),
 # zlib (Zlib), libvpl, AMF and ffnvcodec headers (MIT); on Linux also libva and libdrm (MIT). Patent

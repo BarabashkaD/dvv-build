@@ -8,7 +8,7 @@
 #              [-DPAUSES=<s>;<s>] -P tools/select-vulkan-driver.cmake
 #   PREFIX   the third-party prefix (<root>/_third_party/appleclang)
 #   SWITCH   the repository variable DVV_MACOS_SOFTWARE_GPU: off, false, 0 or no (any case) skips
-#            lavapipe (the GPU tests skip, as before 0.4.0), a way out of a bad Homebrew bottle
+#            lavapipe (the GPU tests skip), a way out of a bad Homebrew bottle
 #            without a release
 #   BREW, CHECK, PGREP  the programs used (defaults: brew from PATH, check-vulkan-device.cmake next to
 #            this script, pgrep); the tests pass stand-ins
