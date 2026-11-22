@@ -88,6 +88,17 @@ add_test(NAME dvv_build.os_sources
                  -DCXX=${CMAKE_CXX_COMPILER}
                  -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/test_os_sources.cmake)
 set_tests_properties(dvv_build.os_sources PROPERTIES TIMEOUT 300)
+string(REPLACE ";" "," header_check_prefix_path "${CMAKE_PREFIX_PATH}")
+add_test(NAME dvv_build.header_check
+         COMMAND ${CMAKE_COMMAND} -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/header-check-test
+                 -DGENERATOR=${CMAKE_GENERATOR}
+                 -DPLATFORM=${CMAKE_GENERATOR_PLATFORM}
+                 -DMAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}
+                 -DCXX=${CMAKE_CXX_COMPILER}
+                 -DPREFIX_PATH=${header_check_prefix_path}
+                 -DVK_DRIVER_FILES=${DVV_TEST_VK_DRIVER_FILES}
+                 -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/test_header_check.cmake)
+set_tests_properties(dvv_build.header_check PROPERTIES TIMEOUT 300)
 add_test(NAME dvv_build.os_blocks
          COMMAND ${CMAKE_COMMAND} -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/os-blocks-test
                  -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/test_os_blocks.cmake)

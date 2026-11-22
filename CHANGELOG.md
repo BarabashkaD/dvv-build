@@ -5,6 +5,12 @@ versions follow semantic versioning with the dvv rules: compatible = the same 0.
 minimum version; a replaced or unused API is removed in the next 0.x minor, with no deprecation period.
 This file is the release notes (there are no GitHub Releases).
 
+## [0.6.1] - 2026-11-22
+
+### Added
+- `dvv_add_header_check` (cmake/DvvHeaderCheck.cmake).
+- `dvv_os_headers` and `dvv_os_headers_for` (cmake/DvvOsSources.cmake).
+
 ## [0.6.0] - 2026-11-22
 
 The version rule is "the same 0.minor and at least the minimum", so a 0.x minor may remove; the

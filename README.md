@@ -140,6 +140,7 @@ A platform builds every file of its list that exists for the stem (`posix` and `
 macOS). A stem with no file and no stub, and a call without a stem, fail at configure time;
 `OPTIONAL` allows a stem that only some platforms have. `.mm` files are compiled with `-fobjc-arc`.
 The queries `dvv_os_all_suffixes`, `dvv_os_suffixes_for` and `dvv_os_suffixes` return the lists.
+`dvv_os_headers` and `dvv_os_headers_for` return the headers a platform uses, by the same rule.
 
 A shared file (no per-OS suffix) may hold an OS `#if` block of at most 5 lines, with a comment and
 the same types on every branch. A block of only includes, pragmas and `#error` lines is free at any
@@ -162,6 +163,15 @@ Windows-only and macOS-only files are not tidied, because Tidy runs on Linux.
 repository's preset keeps `CMAKE_EXPORT_COMPILE_COMMANDS` on.
 `tidy-files` fails when git quotes a tracked path, and when a tracked path or a compile-database path
 contains `;`; a path with `[` or `]` is listed like any other.
+
+## Public headers
+
+Every public header compiles on its own. `dvv_add_header_check(<target> <include-root>)`
+(cmake/DvvHeaderCheck.cmake) compiles one unit per header under `<include-root>` that includes
+only that header, with the usage requirements of `<target>` and the dvv compiler options. A
+library calls it in its tests/CMakeLists.txt, so every test build checks the headers. Per-OS
+headers are checked only on their OS (`dvv_os_headers`). Public headers are `.h`. A change that
+touches a C++ file also gets its includes right.
 
 ## Prerequisites
 
@@ -204,7 +214,7 @@ contains `;`; a path with `[` or `]` is listed like any other.
 
 ```powershell
 git clone <base>/dvv-gpu
-git clone --branch v0.6.0 <base>/dvv-build      # the dvv-build line of dvv-gpu/dvv-deps.txt
+git clone --branch v0.6.1 <base>/dvv-build      # the dvv-build line of dvv-gpu/dvv-deps.txt
 git -C dvv-build config user.name <GitHub handle>
 git -C dvv-build config user.email <GitHub noreply e-mail>
 python -m pip install -r dvv-build/tools/requirements.txt
@@ -335,7 +345,7 @@ concurrency:                      # newer PR pushes cancel older runs; a running
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   ci:
-    uses: <owner>/dvv-build/.github/workflows/dvv-ci.yml@v0.6.0   # = the dvv-build line
+    uses: <owner>/dvv-build/.github/workflows/dvv-ci.yml@v0.6.1   # = the dvv-build line
     with:
       repo: dvv-gpu
 ```
@@ -476,7 +486,8 @@ dvv-build's own tests (`cmake --workflow --preset vs2026` in dvv-build runs them
 | `dvv_build.dvv_deps` | `cmake -DWORK_DIR=<dir> -DGENERATOR=Ninja -P tests/cmake/test_dvv_deps.cmake` | `dvv_dependencies()` in lib and app layouts |
 | `dvv_build.fetch_deps` | `cmake -DWORK_DIR=<dir> -P tests/tools/test_fetch_deps.cmake` | `tools/fetch-deps.cmake` (local bare repositories) |
 | `dvv_build.check_pins` | `cmake -DWORK_DIR=<dir> -P tests/tools/test_check_pins.cmake` | `tools/check-pins.cmake` (local bare repositories) |
-| `dvv_build.os_suffixes` | `cmake -P tests/cmake/test_os_suffixes.cmake` | the suffix lists, the union, `dvv_os_suffixes_for` and `dvv_os_suffixes` |
+| `dvv_build.os_suffixes` | `cmake -P tests/cmake/test_os_suffixes.cmake` | the suffix lists, the union, `dvv_os_suffixes_for`, `dvv_os_headers_for` and `dvv_os_suffixes` |
+| `dvv_build.header_check` | `cmake -DWORK_DIR=<dir> -DGENERATOR=Ninja -DMAKE_PROGRAM=<ninja> -DCXX=<compiler> -DPREFIX_PATH=<prefix> -P tests/cmake/test_header_check.cmake` | `dvv_add_header_check` in a fixture project (passing, missing include, per-OS skip, warnings, added and removed headers, configure errors) |
 | `dvv_build.os_sources` | `cmake -DWORK_DIR=<dir> -DGENERATOR=Ninja -DMAKE_PROGRAM=<ninja> -DCXX=<compiler> -P tests/cmake/test_os_sources.cmake` | `dvv_os_sources` in fixture projects (selection, layering, stub, `OPTIONAL`, `.mm`) |
 | `dvv_build.os_blocks` | `cmake -DWORK_DIR=<dir> -P tests/tools/test_os_blocks.cmake` | `tools/os-blocks.cmake` (fixture git repositories) |
 | `dvv_build.tidy_files` | `cmake -DWORK_DIR=<dir> -P tests/tools/test_tidy_files.cmake` | `tools/tidy-files.cmake` (fixture compile databases) |

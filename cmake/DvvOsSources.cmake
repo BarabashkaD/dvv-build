@@ -1,5 +1,6 @@
 # The per-OS file rule: per-OS code lives in <stem>_<suffix>.{cpp,mm,h}. The suffix names the OS,
 # the window system or the toolkit backend. A platform may build several suffixes ("layered" files).
+# The header queries dvv_os_headers and dvv_os_headers_for pick a platform's headers from a list.
 # Including this file defines variables and functions only (no target command), so a project and
 # `cmake -P` can both include it.
 set(DVV_OS_SUFFIXES_WIN32 win32 msw)
@@ -42,6 +43,54 @@ endfunction()
 function(dvv_os_suffixes out)
     _dvv_os_platform(platform)
     dvv_os_suffixes_for(${platform} list)
+    set(${out} "${list}" PARENT_SCOPE)
+endfunction()
+
+# dvv_os_headers_for(<WIN32|APPLE|OTHER> <out-var> <header>...): the given headers this platform uses,
+# in the given order. A header's stem is its path without ".h" and without a trailing _<suffix> (a
+# suffix of dvv_os_all_suffixes), so metal.h and posix_clock.h have no suffix. Kept: a header with no
+# suffix, a <stem>_<suffix>.h of the platform, and a <stem>_stub.h when the list holds no
+# <stem>_<suffix>.h of the platform. Any other per-OS header is dropped. No file-system access.
+# The suffix match is case-sensitive.
+function(dvv_os_headers_for platform out)
+    dvv_os_suffixes_for(${platform} suffixes)
+    dvv_os_all_suffixes(all_suffixes)
+    set(headers ${ARGN})
+    set(kept "")
+    foreach(header IN LISTS headers)
+        if(NOT header MATCHES "^(.+)\\.h$")
+            message(FATAL_ERROR "dvv_os_headers_for: '${header}' is not a .h file")
+        endif()
+        set(path "${CMAKE_MATCH_1}")
+        set(stem "${path}")
+        set(suffix "")
+        foreach(candidate IN LISTS all_suffixes)
+            if(path MATCHES "^(.+)_${candidate}$")
+                set(stem "${CMAKE_MATCH_1}")
+                set(suffix "${candidate}")
+            endif()
+        endforeach()
+        if(suffix STREQUAL "" OR suffix IN_LIST suffixes)
+            list(APPEND kept "${header}")
+        elseif(suffix STREQUAL DVV_OS_SUFFIX_FALLBACK)
+            set(layered FALSE)
+            foreach(own IN LISTS suffixes)
+                if("${stem}_${own}.h" IN_LIST headers)
+                    set(layered TRUE)
+                endif()
+            endforeach()
+            if(NOT layered)
+                list(APPEND kept "${header}")
+            endif()
+        endif()
+    endforeach()
+    set(${out} "${kept}" PARENT_SCOPE)
+endfunction()
+
+# dvv_os_headers(<out-var> <header>...): dvv_os_headers_for this build's platform.
+function(dvv_os_headers out)
+    _dvv_os_platform(platform)
+    dvv_os_headers_for(${platform} list ${ARGN})
     set(${out} "${list}" PARENT_SCOPE)
 endfunction()
 
