@@ -13,10 +13,11 @@
 # FETCHCONTENT_SOURCE_DIR_DVV_<X> that points elsewhere gives a warning (it breaks the one-copy rule);
 # FETCHCONTENT_TRY_FIND_PACKAGE_MODE=ALWAYS is an error.
 # For each dependency it then checks the version (project(dvv_<x> VERSION ...)) against the minimum:
-# same major and >= the minimum. A library added as a dependency calls dvv_dependencies() again,
+# the same 0.minor and >= the minimum. A library added as a dependency calls dvv_dependencies() again,
 # which adds nothing new and checks that library's minimums against the versions already resolved.
-# So the rule "a repository's minimum for X >= the minimum for X of each of its dvv dependencies" is
-# enforced here only through the resolved versions; fetch-deps.cmake checks the minimums themselves.
+# So the rule "a repository's minimum for X is on the same 0.minor as, and at least, the minimum for
+# X of each of its dvv dependencies" is enforced here only through the resolved versions;
+# fetch-deps.cmake checks the minimums themselves.
 # The top level builds its dependencies without tests unless DVV_TEST_DEPENDENCIES is set.
 # Sets in the caller: DVV_BUILD_VERSION, and per dependency dvv_<x>_MIN_VERSION (for the package
 # config templates), dvv_<x>_SOURCE_DIR and dvv_<x>_BINARY_DIR.
@@ -28,9 +29,9 @@ include_guard(GLOBAL)
 include(FetchContent)
 include("${CMAKE_CURRENT_LIST_DIR}/DvvDepsFile.cmake")
 
-# Fails unless <found> has the major of <min> and is >= <min>.
+# Fails unless <found> meets <min> (dvv_version_meets: the same 0.minor and >= <min>).
 function(_dvv_deps_check who what found min where)
-    string(REGEX MATCH "^[0-9]+" min_major "${min}")
+    dvv_version_line(min_line "${min}")
     if(found STREQUAL "")
         set(found "no version (project() without VERSION?)")
     else()
@@ -39,8 +40,8 @@ function(_dvv_deps_check who what found min where)
             return()
         endif()
     endif()
-    message(FATAL_ERROR "${who} requires ${what} >= ${min} (same major), found ${found} at ${where}; "
-                        "put a ${min_major}.x version >= ${min} there (lib: check out that tag; app: "
+    message(FATAL_ERROR "${who} requires ${what} >= ${min} (a ${min_line}.x version), found ${found} at ${where}; "
+                        "put a ${min_line}.x version >= ${min} there (lib: check out that tag; app: "
                         "move the libs/ submodule) or change the minimum in ${who}'s dvv-deps.txt")
 endfunction()
 

@@ -452,8 +452,9 @@ jobs:
       - name: Bootstrap
         shell: pwsh
         run: ./${{ env.DVV_BUILD }}/bootstrap.ps1 -Toolchain $env:TOOLCHAIN
-      # Windows runners have no GPU: the GPU, display and GUI tests exit with 77 and CTest reports
-      # them as skipped. The three steps are the workflow preset's steps for one configuration.
+      # Windows runners have no GPU: the GPU and GUI tests exit with 77 and CTest reports them as
+      # skipped; the display tests that need only a window run. The three steps are the workflow
+      # preset's steps for one configuration.
       - name: Configure
         working-directory: ${{ inputs.repo }}
         env:
@@ -550,10 +551,9 @@ jobs:
       # cannot), otherwise Mesa's lavapipe from Homebrew's mesa bottle. lavapipe is a CI-only
       # exception to U-MAC2 (KosmicKrisp only), never in the prefix or a package, as Linux CI takes
       # it from the CI image. A prefix without KosmicKrisp or a failed lavapipe fails the job; the repository
-      # variable DVV_MACOS_SOFTWARE_GPU=off skips lavapipe (the GPU tests then skip, as before
-      # dvv-build 0.4.0), a way out of a bad Homebrew bottle without a release. Outputs: driver
-      # (kosmickrisp, lavapipe or none), manifest and display (1 only on KosmicKrisp with a desktop
-      # session).
+      # variable DVV_MACOS_SOFTWARE_GPU=off skips lavapipe (the GPU tests then skip), a way out of a
+      # bad Homebrew bottle without a release. Outputs: driver (kosmickrisp, lavapipe or none),
+      # manifest and display (1 only on KosmicKrisp with a desktop session).
       - name: Choose the Vulkan driver
         id: vulkan
         timeout-minutes: 20

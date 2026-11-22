@@ -4,18 +4,19 @@
 # REPO is the folder name of the library in the dvv root (e.g. dvv-gpu), not a path; check-pins.cmake
 # takes a path instead. The dvv root is the parent folder of the dvv-build holding this script. It
 # reads <root>/<REPO>/dvv-deps.txt (with cmake/DvvDepsFile.cmake, as DvvDeps.cmake does) and then:
-# 1. checks that this dvv-build's VERSION has the major of the dvv-build line and is >= it;
-# 2. for each dvv-<x> line: an existing <root>/dvv-<x> must have the same major and a version
-#    >= the minimum (it is never updated); a missing one is cloned at tag v<minimum>, depth 1, from
+# 1. checks that this dvv-build's VERSION is on the 0.minor of the dvv-build line and is >= it;
+# 2. for each dvv-<x> line: an existing <root>/dvv-<x> must be on the same 0.minor and >= the
+#    minimum (it is never updated); a missing one is cloned at tag v<minimum>, depth 1, from
 #    <base URL>/dvv-<x>, and its version must be exactly the minimum. The base URL is
 #    DVV_GIT_BASE_URL (-D or environment), else the library's origin URL without its last path component.
 #    A line with a branch-only override ' @<commit>' instead fetches exactly that commit (depth 1) into
-#    a missing folder, verifies the checkout and requires a version >= the minimum (same major); an
+#    a missing folder, verifies the checkout and requires a version >= the minimum on its 0.minor; an
 #    existing folder must be checked out at that commit;
-# 3. checks the rule "a repository's minimum for X >= the minimum for X of each of its dvv
-#    dependencies" for every dependency's own dvv-deps.txt (X = dvv-build or a dvv library), and that
-#    the library lists every dvv library its dependencies list. A dependency above its minimum is
-#    checked at its tag v<minimum> when its folder has that tag, else at its present version.
+# 3. checks the rule "a repository's minimum for X is on the same 0.minor as, and at least, the
+#    minimum for X of each of its dvv dependencies" for every dependency's own dvv-deps.txt (X =
+#    dvv-build or a dvv library), and that the library lists every dvv library its dependencies list.
+#    A dependency above its minimum is checked at its tag v<minimum> when its folder has that tag,
+#    else at its present version.
 # All problems are reported together; the script fails if there is any. Git never asks for
 # credentials (it fails instead), and credentials in a URL are not printed.
 cmake_minimum_required(VERSION 4.2)
@@ -74,7 +75,8 @@ if(EXISTS "${build_dir}/VERSION")
 endif()
 dvv_version_meets(ok "${build_version}" "${lib_build_min}")
 if(NOT ok)
-    message(FATAL_ERROR "${REPO} needs dvv-build >= ${lib_build_min} (same major), found ${build_version} "
+    dvv_version_line(line "${lib_build_min}")
+    message(FATAL_ERROR "${REPO} needs dvv-build >= ${lib_build_min} (a ${line}.x version), found ${build_version} "
                         "at ${build_dir}: clone dvv-build at tag v${lib_build_min} next to ${REPO}")
 endif()
 
@@ -128,12 +130,15 @@ foreach(dep IN LISTS lib_repos)
         if(found STREQUAL "")
             set(found "no version (no project(... VERSION) in CMakeLists.txt)")
         endif()
+        dvv_version_line(line "${min}")
         if(NOT ok AND NOT commit STREQUAL "")
             add_error("${dep} commit ${commit} at ${dir} has project version '${found}', but ${REPO} "
-                      "needs ${dep} >= ${min} (same major): override a later commit or lower the minimum")
+                      "needs ${dep} >= ${min} (a ${line}.x version): override a commit of a ${line}.x "
+                      "version >= ${min}, or change the minimum to that commit's line (or lower it to "
+                      "that commit's version)")
             continue()
         elseif(NOT ok)
-            add_error("${REPO} needs ${dep} >= ${min} (same major), found ${found} at ${dir}: check it "
+            add_error("${REPO} needs ${dep} >= ${min} (a ${line}.x version), found ${found} at ${dir}: check it "
                       "out at a matching tag (`git -C ${dir} fetch --tags` and `git -C ${dir} checkout "
                       "v${min}`) or remove that folder and run this script again")
             continue()
@@ -182,8 +187,11 @@ foreach(dep IN LISTS lib_repos)
         version_of(found "${dir}")
         dvv_version_meets(ok "${found}" "${min}")
         if(NOT ok)
+            dvv_version_line(line "${min}")
             add_error("${dep} commit ${commit} from ${shown} has project version '${found}', but ${REPO} "
-                      "needs ${dep} >= ${min} (same major): override a later commit or lower the minimum")
+                      "needs ${dep} >= ${min} (a ${line}.x version): override a commit of a ${line}.x "
+                      "version >= ${min}, or change the minimum to that commit's line (or lower it to "
+                      "that commit's version)")
             continue()
         endif()
         message(STATUS "fetch-deps: ${dep}: checked out commit ${commit} (version ${found}, override of "
@@ -289,11 +297,12 @@ foreach(dep IN LISTS present)
         if(ok)
             continue()
         endif()
-        string(REGEX MATCH "^[0-9]+" lib_major "${lib_min}")
-        string(REGEX MATCH "^[0-9]+" dep_major "${dep_min}")
-        if(NOT lib_major EQUAL dep_major)
-            add_error("${at} is built for ${x} ${dep_major}.x, ${REPO} needs ${x} ${lib_major}.x: use a "
-                      "${dep} release for ${x} ${lib_major}.x")
+        if(lib_min VERSION_GREATER dep_min)
+            # lib_min > dep_min and not ok: another line. The dependency is built for an older 0.minor.
+            dvv_version_line(lib_line "${lib_min}")
+            dvv_version_line(dep_line "${dep_min}")
+            add_error("${at} is built for ${x} ${dep_line}.x, ${REPO} needs ${x} ${lib_line}.x: use a "
+                      "${dep} release for ${x} ${lib_line}.x")
         elseif(NOT above STREQUAL "")
             add_error("${above} needs ${x} >= ${dep_min}: check out ${dep} v${min} or raise the ${x} line "
                       "of ${REPO}/dvv-deps.txt")

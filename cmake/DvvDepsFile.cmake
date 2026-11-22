@@ -112,11 +112,30 @@ function(dvv_read_deps_file who file prefix)
     set(${prefix}_repos "${repos}" PARENT_SCOPE)
 endfunction()
 
-# dvv_version_meets(<out> <found> <min>): TRUE when <found> has the major of <min> and is >= <min>.
+# dvv_version_line(<out> <version>): "<major>.<minor>" of <version>, or "" when <version> does not
+# start with two numbers. Versions on one line are compatible (the package version files'
+# SameMinorVersion).
+function(dvv_version_line out version)
+    if(version MATCHES "^([0-9]+)\\.([0-9]+)\\.")
+        set(${out} "${CMAKE_MATCH_1}.${CMAKE_MATCH_2}" PARENT_SCOPE)
+    else()
+        set(${out} "" PARENT_SCOPE)
+    endif()
+endfunction()
+
+# dvv_version_meets(<out> <found> <min>): TRUE when <found> is on the line of <min> (the same
+# 0.minor) and is >= <min>. The parts are compared as numbers: 0.06.0 is on the line of 0.6.0.
 function(dvv_version_meets out found min)
-    string(REGEX MATCH "^[0-9]+" min_major "${min}")
-    string(REGEX MATCH "^[0-9]+" found_major "${found}")
-    if(NOT found STREQUAL "" AND found_major EQUAL min_major AND found VERSION_GREATER_EQUAL min)
+    set(same_line FALSE)
+    if(found MATCHES "^([0-9]+)\\.([0-9]+)\\.")
+        set(found_major "${CMAKE_MATCH_1}")
+        set(found_minor "${CMAKE_MATCH_2}")
+        if(min MATCHES "^([0-9]+)\\.([0-9]+)\\."
+           AND found_major EQUAL CMAKE_MATCH_1 AND found_minor EQUAL CMAKE_MATCH_2)
+            set(same_line TRUE)
+        endif()
+    endif()
+    if(same_line AND found VERSION_GREATER_EQUAL min)
         set(${out} TRUE PARENT_SCOPE)
     else()
         set(${out} FALSE PARENT_SCOPE)

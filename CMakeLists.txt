@@ -127,8 +127,9 @@ if(DVV_WX_CONFIG AND NOT DVV_SANITIZE)
 endif()
 
 # custom_ffmpeg in the prefix (M4 design §9): the dvv_ffmpeg_sdk package finds FFmpeg's headers,
-# libraries and programs, the ffmpeg program is an LGPL build, and FFmpeg's headers compile as C++.
-# A consumer test, so label `package`. Not under sanitizers.
+# its six libraries and the ffmpeg program, the ffmpeg program is an LGPL build, FFmpeg's headers
+# compile as C++, and dvv-third-party-state.cmake holds the release data. A consumer test, so label
+# `package`. Not under sanitizers.
 if(NOT DVV_SANITIZE)
     string(REPLACE ";" "," ffmpeg_prefix_path "${CMAKE_PREFIX_PATH}")
     add_test(NAME dvv_build.ffmpeg_sdk CONFIGURATIONS Debug

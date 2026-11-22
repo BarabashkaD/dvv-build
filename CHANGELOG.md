@@ -1,9 +1,46 @@
 # Changelog
 
 All notable changes to dvv-build. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
-versions follow semantic versioning with the dvv rules: compatible = the same major and at least the
-minimum version, also for 0.x; breaking changes only in a new major, after a deprecation. This file is
-the release notes (there are no GitHub Releases).
+versions follow semantic versioning with the dvv rules: compatible = the same 0.minor and at least the
+minimum version; a replaced or unused API is removed in the next 0.x minor, with no deprecation period.
+This file is the release notes (there are no GitHub Releases).
+
+## [0.6.0] - 2026-11-22
+
+The version rule is "the same 0.minor and at least the minimum", so a 0.x minor may remove; the
+third-party prefix holds one set of FFmpeg and LAME release data.
+
+### Changed
+- `dvv_version_meets` (cmake/DvvDepsFile.cmake), and with it `dvv_dependencies()` and
+  tools/fetch-deps.cmake, accept a dependency only on the 0.minor of its minimum and at or above
+  it: 0.6.2 meets the minimum 0.6.0, 0.7.0 does not. The messages name the line ("a 0.6.x
+  version"). fetch-deps reports a dependency built for an older 0.minor than the library needs.
+- `dvv_ffmpeg_sdk` sets `DVV_FFMPEG_PROGRAM`, `DVV_FFMPEG_RUNTIME_DIR` and the target
+  `dvv::ffmpeg_headers`, and is found when the runtime folder holds one loadable file of each of
+  the six libraries. It no longer requires ffprobe, the licence folder or build-info.txt.
+- The first CI run with this release rebuilds the third-party prefix cache (its key hashes deps/).
+
+### Added
+- `dvv_version_line(<out> <version>)`: the `<major>.<minor>` line of a version.
+
+### Removed
+- From `dvv_ffmpeg_sdk`: `DVV_FFMPEG_RELEASE_VERSION`, `DVV_FFMPEG_RELEASE_URL`,
+  `DVV_FFMPEG_RELEASE_SHA256`, `DVV_BUNDLE_FFMPEG`, `DVV_LAME_SOURCE_URL`,
+  `DVV_LAME_SOURCE_SHA256` (the same data is in `dvv-third-party-state.cmake`),
+  `DVV_LAME_SOURCE_VERSION`, `DVV_FFMPEG_SOURCE_REPOSITORY` and `DVV_FFMPEG_SOURCE_TAG` (no reader;
+  the repository and tag are in `DVV_CUSTOM_FFMPEG_URL`), and `DVV_FFMPEG_ROOT`, `DVV_FFMPEG_INCLUDE_DIR`,
+  `DVV_FFMPEG_LIBRARY_FILES`, `DVV_FFMPEG_SHIPPED_FILES`, `DVV_FFPROBE_PROGRAM`,
+  `DVV_FFMPEG_COMMAND`, `DVV_FFPROBE_COMMAND`, `DVV_FFMPEG_LICENSE_DIR`, `DVV_FFMPEG_BUILD_INFO`
+  (no reader; `dvv::ffmpeg_headers` carries the include folder).
+- The superbuild no longer deletes the root-level wxWidgets package that dvv-build 0.2.0
+  installed.
+
+### Fixed
+- README and comments no longer describe earlier releases' behaviour as current.
+
+Adopting: raise every dvv-deps.txt line to the new minors of this round and the workflow to
+`@v0.6.0`; the dvv-build in use must be on the 0.minor of each repository's dvv-build line too;
+read FFmpeg's release data from `dvv-third-party-state.cmake`.
 
 ## [0.5.1] - 2026-11-19
 

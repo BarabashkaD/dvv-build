@@ -28,7 +28,7 @@ include(ExternalProject)
 include("${CMAKE_CURRENT_LIST_DIR}/../cmake/DvvThirdParty.cmake")
 # User decision U4 (M4 design §2, D3, D27): ship custom_ffmpeg's LGPL libraries in the rawreel
 # packages. OFF keeps FFmpeg for development and tests but leaves it out of the shipped notices and,
-# through dvv_ffmpeg_sdk, out of the packages and the sources archive.
+# through dvv-third-party-state.cmake, out of the packages and the sources archive.
 option(DVV_BUNDLE_FFMPEG "Ship custom_ffmpeg's LGPL libraries in the rawreel packages" ON)
 include("${CMAKE_CURRENT_LIST_DIR}/versions.cmake")
 
@@ -41,7 +41,7 @@ cmake_path(ABSOLUTE_PATH DVV_THIRD_PARTY_PREFIX BASE_DIRECTORY "${CMAKE_BINARY_D
 # bootstrap passes <root>/_build/downloads, which it never removes (unlike the build tree), so an
 # archive is downloaded once and CI can cache the folder. An archive found there is used only when
 # its SHA256 matches the pin; otherwise ExternalProject downloads it again. Unset: the build tree's
-# Download/ folder, as before.
+# Download/ folder.
 if(DVV_DOWNLOAD_DIR)
     cmake_path(ABSOLUTE_PATH DVV_DOWNLOAD_DIR BASE_DIRECTORY "${CMAKE_BINARY_DIR}" NORMALIZE
                OUTPUT_VARIABLE download_root)
@@ -62,16 +62,6 @@ foreach(name IN LISTS names)
                          POST_INSTALL SHIPPED SEPARATE_PREFIX)
         get_property(${key} GLOBAL PROPERTY "DVV_THIRD_PARTY_${name}_${key}")
     endforeach()
-    if(name STREQUAL "wxWidgets")
-        # dvv-build 0.2.0 installed wxWidgets at the prefix root. Its package folder
-        # (lib/cmake/wxWidgets-3.3) would be found before the one in the separate prefix, so it
-        # goes; wxWidgets is the only entry that moved out of the prefix.
-        file(GLOB stale_packages LIST_DIRECTORIES true "${prefix}/lib/cmake/wxWidgets*")
-        foreach(stale IN LISTS stale_packages)
-            message(STATUS "wxWidgets: removing the old root-level package ${stale}")
-            file(REMOVE_RECURSE "${stale}")
-        endforeach()
-    endif()
     # An entry with SEPARATE_PREFIX installs into <prefix>-<suffix>, which CI caches on its own and
     # restores with its marker. A matching marker skips the entry; otherwise the folder and the
     # entry's step stamps go, so a surviving build tree cannot skip the install.
@@ -231,13 +221,10 @@ add_custom_target(third_party_notices ALL
 # dvv_ffmpeg_sdk: the prefix's FFmpeg for dvv-components and rawreel (M4 design §9).
 foreach(key IN ITEMS VERSION URL SHA256)
     get_property(ffmpeg_${key} GLOBAL PROPERTY "DVV_THIRD_PARTY_custom_ffmpeg_${key}")
+endforeach()
+foreach(key IN ITEMS URL SHA256)
     get_property(lame_${key} GLOBAL PROPERTY "DVV_SOURCE_PIN_lame_${key}")
 endforeach()
-if(NOT ffmpeg_URL MATCHES "^(https://github\\.com/[^/]+/[^/]+)/releases/download/([^/]+)/")
-    message(FATAL_ERROR "custom_ffmpeg's URL is not a GitHub release asset: ${ffmpeg_URL}")
-endif()
-set(ffmpeg_repository "${CMAKE_MATCH_1}")
-set(ffmpeg_tag "${CMAKE_MATCH_2}")
 if(DVV_BUNDLE_FFMPEG)
     set(bundle_value ON)
 else()
@@ -247,8 +234,8 @@ configure_file("${CMAKE_CURRENT_LIST_DIR}/dvv_ffmpeg_sdkConfig.cmake.in"
                "${prefix}/lib/cmake/dvv_ffmpeg_sdk/dvv_ffmpeg_sdkConfig.cmake" @ONLY)
 
 # What the prefix ships, for rawreel's packaging and its cmake -P scripts (M4 design D19, D27, §9),
-# which cannot load dvv_ffmpeg_sdk (it creates a target). The same values as the package. Written at
-# configure time; the PREBUILT extract steps replace only <prefix>/<name>, never this file.
+# which cannot load dvv_ffmpeg_sdk (it creates a target). Written at configure time; the PREBUILT
+# extract steps replace only <prefix>/<name>, never this file.
 list(SORT shipped_names)
 # custom_ffmpeg's licence supplements (dvv_licence_supplement), copied unchanged into the prefix
 # for rawreel's package (the shipped SHA256 equals the pin), each recorded as "<path>|<sha256>".

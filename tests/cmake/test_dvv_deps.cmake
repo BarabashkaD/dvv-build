@@ -25,6 +25,40 @@ endif()
 cmake_path(GET DVV_DEPS PARENT_PATH DVV_DEPS_FILE)
 set(DVV_DEPS_FILE "${DVV_DEPS_FILE}/DvvDepsFile.cmake")
 
+# The version rule (DvvDepsFile.cmake): the same <major>.<minor> and >= the minimum.
+include("${DVV_DEPS_FILE}")
+function(check_meets found min expected)
+    dvv_version_meets(ok "${found}" "${min}")
+    if(NOT ok STREQUAL expected)
+        message(SEND_ERROR "dvv_version_meets('${found}' '${min}') is ${ok}, expected ${expected}")
+        set_property(GLOBAL APPEND PROPERTY test_dvv_deps_failed version_rule)
+    endif()
+endfunction()
+function(check_line version expected)
+    dvv_version_line(line "${version}")
+    if(NOT line STREQUAL expected)
+        message(SEND_ERROR "dvv_version_line('${version}') is '${line}', expected '${expected}'")
+        set_property(GLOBAL APPEND PROPERTY test_dvv_deps_failed version_rule)
+    endif()
+endfunction()
+check_meets("0.6.0" "0.6.0" TRUE)
+check_meets("0.6.3" "0.6.0" TRUE)
+check_meets("0.6.0" "0.6.1" FALSE)
+check_meets("0.7.0" "0.6.0" FALSE)
+check_meets("0.5.9" "0.6.0" FALSE)
+check_meets("0.60.0" "0.6.0" FALSE)
+check_meets("10.6.0" "0.6.0" FALSE)
+check_meets("" "0.6.0" FALSE)
+check_meets("0.6.10" "0.6.9" TRUE)
+check_meets("0.10.0" "0.1.0" FALSE)
+check_meets("0.1.0" "0.10.0" FALSE)
+check_meets("0.06.0" "0.6.0" TRUE)
+check_line("0.6.3" "0.6")
+check_line("12.34.5" "12.34")
+check_line("0.10.2" "0.10")
+check_line("0.6" "")
+check_line("" "")
+
 # Writes the fake project <name> in <dir> with project version <version> ("none": no VERSION);
 # ARGN = its dvv-deps.txt lines. The top level records its variables right before dvv_dependencies();
 # each dependency reports, as leaked=[...], the variables it starts with beyond those, except
@@ -186,7 +220,7 @@ endfunction()
 
 string(CONCAT fetch_hint "lib: run `cmake -DREPO=dvv-gamma -P dvv-build/tools/fetch-deps\\.cmake` "
                          "in [^;]*/root; app: run `git submodule update --init` in the app")
-string(CONCAT version_hint "put a 0\\.x version >= [0-9.]+ there \\(lib: check out that tag; app: move "
+string(CONCAT version_hint "put a 0\\.[0-9]+\\.x version >= [0-9.]+ there \\(lib: check out that tag; app: move "
                            "the libs/ submodule\\) or change the minimum in dvv-[a-z]+'s dvv-deps\\.txt")
 
 # All minimums met: each lib is configured once, the deps without tests, the top level with tests;
@@ -205,28 +239,30 @@ run_case(app APP
                 "fixture: fakeapp tests=ON leaked=\\[\\] build_ver=\\[0\\.1\\.3\\] alpha_min=\\[0\\.1\\.0\\] alpha_src=\\[[^]]*/app/libs/dvv-alpha\\]"
     EXPECT_NONE "leaked=\\[[^]]+\\]" "CMake Warning")
 run_case(app_too_low FAIL APP TOP_DEPS "dvv-build 0.1.0" "dvv-alpha 0.2.0" "dvv-beta 0.1.0"
-    EXPECT "fakeapp requires dvv-alpha >= 0\\.2\\.0 \\(same major\\), found 0\\.1\\.0 at [^ ]*/app/libs/dvv-alpha;")
+    EXPECT "fakeapp requires dvv-alpha >= 0\\.2\\.0 \\(a 0\\.2\\.x version\\), found 0\\.1\\.0 at [^ ]*/app/libs/dvv-alpha;")
 # A dep folder is missing, or present but empty (an app clone without --recursive).
 run_case(missing_folder FAIL BETA missing
     EXPECT "dvv-gamma needs dvv-beta: .*/dvv-beta is missing or empty; ${fetch_hint}")
 run_case(empty_folder FAIL BETA empty
     EXPECT "dvv-gamma needs dvv-beta: .*/dvv-beta is missing or empty; ${fetch_hint}")
-# A dep below the minimum, of another major version, or without a project version.
+# A dep below the minimum, of another 0.minor, or without a project version.
 run_case(too_low FAIL TOP_DEPS "dvv-build 0.1.0" "dvv-alpha 0.2.0" "dvv-beta 0.1.0"
-    EXPECT "dvv-gamma requires dvv-alpha >= 0\\.2\\.0 \\(same major\\), found 0\\.1\\.0 at .*/dvv-alpha; ${version_hint}")
-run_case(other_major FAIL ALPHA_VERSION 1.0.0 BETA_DEPS "dvv-build 0.1.0"
-    EXPECT "dvv-gamma requires dvv-alpha >= 0\\.1\\.0 \\(same major\\), found 1\\.0\\.0 at .*/dvv-alpha")
+    EXPECT "dvv-gamma requires dvv-alpha >= 0\\.2\\.0 \\(a 0\\.2\\.x version\\), found 0\\.1\\.0 at .*/dvv-alpha; ${version_hint}")
+run_case(other_minor FAIL ALPHA_VERSION 0.2.0 BETA_DEPS "dvv-build 0.1.0"
+    EXPECT "dvv-gamma requires dvv-alpha >= 0\\.1\\.0 \\(a 0\\.1\\.x version\\), found 0\\.2\\.0 at .*/dvv-alpha")
+run_case(patch_above ALPHA_VERSION 0.1.7
+    EXPECT_ONCE "fixture: dvv_gamma tests=ON ")
 run_case(no_version FAIL ALPHA_VERSION none
-    EXPECT "requires dvv-alpha >= 0\\.1\\.0 \\(same major\\), found no version \\(project\\(\\) without VERSION\\?\\) at .*/dvv-alpha")
-# dvv-build below the minimum, or of another major version.
+    EXPECT "requires dvv-alpha >= 0\\.1\\.0 \\(a 0\\.1\\.x version\\), found no version \\(project\\(\\) without VERSION\\?\\) at .*/dvv-alpha")
+# dvv-build below the minimum, or of another 0.minor.
 run_case(build_too_low FAIL TOP_DEPS "dvv-build 0.2.0" "dvv-alpha 0.1.0" "dvv-beta 0.1.0"
-    EXPECT "dvv-gamma requires dvv-build >= 0\\.2\\.0 \\(same major\\), found 0\\.1\\.3 at .*/dvv-build; ${version_hint}")
-run_case(build_other_major FAIL BUILD_VERSION 1.0.0
-    EXPECT "dvv-gamma requires dvv-build >= 0\\.1\\.0 \\(same major\\), found 1\\.0\\.0 at .*/dvv-build")
+    EXPECT "dvv-gamma requires dvv-build >= 0\\.2\\.0 \\(a 0\\.2\\.x version\\), found 0\\.1\\.3 at .*/dvv-build; ${version_hint}")
+run_case(build_other_minor FAIL BUILD_VERSION 0.2.0
+    EXPECT "dvv-gamma requires dvv-build >= 0\\.1\\.0 \\(a 0\\.1\\.x version\\), found 0\\.2\\.0 at .*/dvv-build")
 # dvv-beta is a dep of dvv-gamma and calls dvv_dependencies() itself: its own minimums are checked
 # against the versions the top level resolved.
 run_case(nested_dep_too_low FAIL BETA_DEPS "dvv-build 0.1.0" "dvv-alpha 0.2.0"
-    EXPECT "dvv-beta requires dvv-alpha >= 0\\.2\\.0 \\(same major\\), found 0\\.1\\.0 at .*/dvv-alpha")
+    EXPECT "dvv-beta requires dvv-alpha >= 0\\.2\\.0 \\(a 0\\.2\\.x version\\), found 0\\.1\\.0 at .*/dvv-alpha")
 # The strict file: a malformed line, no dvv-build line, a repo or dvv-build twice, the lib itself,
 # no file at all. The dvv-build line may be anywhere.
 run_case(build_line_last TOP_DEPS "dvv-alpha 0.1.0" "dvv-beta 0.1.0" "dvv-build 0.1.0"
