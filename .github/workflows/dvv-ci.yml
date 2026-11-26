@@ -112,11 +112,16 @@ jobs:
   #   wxWidgets  path <DVV_ROOT>/_third_party/<tc>-wx (bootstrap's separate wxWidgets prefix), key
   #              wx-<runner.os>-<tc>-<wx hash>-<compiler>: the first 16 hex digits of the hash in
   #              its inputs marker (tools/separate-prefix-hash.cmake) and of a SHA256 of the
-  #              compiler's version (Linux: clang-19 --version; Windows: Visual Studio's build
-  #              version and the newest MSVC tools folder; macOS: Xcode's and the SDK's version).
+  #              compiler's version (Linux: clang-19 --version; Windows: the default MSVC toolset's
+  #              and the Windows SDK's version; macOS: Apple clang's version line and the macOS
+  #              SDK's version and build).
   #   prefix     path <DVV_ROOT>/_third_party/<tc>, key third-party-<runner.os>-<tc>-<hash of
-  #              deps/**, cmake/DvvThirdParty.cmake and cmake/DvvSpdx.cmake>: the inputs of
-  #              bootstrap's own up-to-date stamp.
+  #              deps/**, cmake/DvvThirdParty.cmake and cmake/DvvSpdx.cmake>-<compiler>: the
+  #              inputs of bootstrap's own up-to-date stamp and the same 16 hex digits of the
+  #              compiler as the wxWidgets key (the prefix holds static libraries too).
+  # Bootstrap's marker and stamp leave the compiler out, so a key hit takes its fast path. The
+  # compiler is the toolset and SDK, not the IDE: Visual Studio's and Xcode's own build versions
+  # are in neither key, since runner images change them with the same toolset and SDK.
   # On Linux both keys end with -<first 16 hex digits of the CI image's environment hash>
   # (/etc/dvv-ci-image/environment.sha256): the prefix embeds its absolute path (/__w in the
   # container), and the hash covers every package and Python tool version of the image.
@@ -184,18 +189,35 @@ jobs:
             throw "tools/separate-prefix-hash.cmake failed ($LASTEXITCODE): $out"
           }
           $wxHash = $Matches[1].Substring(0, 16)
+          # What both prefixes are compiled with: the MSVC toolset that MSBuild and vcvars default
+          # to (VC\Tools\MSVC\<version>) and the newest Windows SDK with um\windows.h in the kits
+          # root of the registry's 32-bit view, the one CMake's Visual Studio generator selects
+          # with policy CMP0149 NEW (dvv_third_party_common_args() sets it for every project).
+          # Not Visual Studio's own build: image updates change it alone.
           $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
-          $vsBuild = & $vswhere -latest -property catalog_buildVersion
           $vsPath = & $vswhere -latest -property installationPath
-          $msvc = (Get-ChildItem (Join-Path $vsPath 'VC\Tools\MSVC') -Directory |
-            Sort-Object { [version]$_.Name } | Select-Object -Last 1).Name
-          if (-not $vsBuild -or -not $msvc) { throw "No Visual Studio build version or MSVC tools folder" }
-          $compiler = "$vsBuild`n$msvc`n"
-          Write-Host "Compiler: Visual Studio $vsBuild, MSVC $msvc"
-          $sha = [Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($compiler))
-          $fingerprint = [Convert]::ToHexString($sha).ToLowerInvariant().Substring(0, 16)
-          "wx=wx-$env:RUNNER_OS-$env:TOOLCHAIN-$wxHash-$fingerprint" >> $env:GITHUB_OUTPUT
-          "prefix=third-party-$env:RUNNER_OS-$env:TOOLCHAIN-$env:PREFIX_HASH" >> $env:GITHUB_OUTPUT
+          $msvcFile = Join-Path $vsPath 'VC\Auxiliary\Build\Microsoft.VCToolsVersion.default.txt'
+          $msvc = (Test-Path $msvcFile) ? "$(Get-Content $msvcFile -Raw)".Trim() : ''
+          $msvcPath = Join-Path $vsPath "VC\Tools\MSVC\$msvc"
+          if ($msvc -notmatch '^\d+(\.\d+)+$' -or -not (Test-Path $msvcPath)) {
+            throw "No default MSVC toolset in '$vsPath' (Microsoft.VCToolsVersion.default.txt: '$msvc')"
+          }
+          $roots = 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows Kits\Installed Roots'
+          $kits = (Get-ItemProperty $roots -ErrorAction SilentlyContinue).KitsRoot10
+          $sdk = ''
+          if ($kits) {
+            $sdk = (Get-ChildItem (Join-Path $kits 'Include') -Directory -ErrorAction SilentlyContinue |
+              Where-Object { $_.Name -match '^\d+(\.\d+)+$' } |
+              Where-Object { Test-Path (Join-Path $_.FullName 'um\windows.h') } |
+              Sort-Object { [version]$_.Name } | Select-Object -Last 1).Name
+          }
+          if (-not $sdk) { throw "No Windows SDK with um\windows.h in the kits root '$kits'" }
+          Write-Host "Toolchain: MSVC $msvc, Windows SDK $sdk"
+          $text = "MSVC $msvc`nWindows SDK $sdk`n"
+          $sha = [Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($text))
+          $toolchain = [Convert]::ToHexString($sha).ToLowerInvariant().Substring(0, 16)
+          "wx=wx-$env:RUNNER_OS-$env:TOOLCHAIN-$wxHash-$toolchain" >> $env:GITHUB_OUTPUT
+          "prefix=third-party-$env:RUNNER_OS-$env:TOOLCHAIN-$env:PREFIX_HASH-$toolchain" >> $env:GITHUB_OUTPUT
           # The pins only (the URL and SHA256 lines of versions.cmake): an edit elsewhere in the
           # file keeps the downloads entry.
           $pinLines = Get-Content (Join-Path $env:DVV_BUILD 'deps/versions.cmake') |
@@ -316,7 +338,7 @@ jobs:
       - &check-ci-image
         name: Check the CI image
         run: cmake "-DDVV_BUILD=$DVV_BUILD" -P "$DVV_BUILD/tools/check-ci-image.cmake"
-      # The compiler comes from the CI image; its version is part of the wxWidgets key.
+      # The compiler comes from the CI image; its version is part of both keys.
       - &keys-unix
         name: Cache keys
         id: keys
@@ -340,14 +362,21 @@ jobs:
             fi
             suffix="-${image_env:0:16}"
           else
-            compiler=$(xcodebuild -version && xcrun --show-sdk-version)
+            # What both prefixes are compiled with: bootstrap's /usr/bin/clang (its first version
+            # line names the Apple clang build) and the SDK that SDKROOT selects, by version and
+            # build. Not Xcode's own version: an image can change it with the same clang and SDK.
+            clang_version=$(/usr/bin/clang --version)
+            sdk_version=$(xcrun --show-sdk-version)
+            sdk_build=$(xcrun --show-sdk-build-version)
+            compiler=$(printf '%s\nmacOS SDK %s (%s)' "${clang_version%%$'\n'*}" "$sdk_version" \
+              "$sdk_build")
             suffix=
           fi
           echo "Compiler:"
           echo "$compiler"
           fingerprint=$(printf '%s\n' "$compiler" | shasum -a 256 | cut -c1-16)
           echo "wx=wx-$RUNNER_OS-$TOOLCHAIN-${wx_hash:0:16}-$fingerprint$suffix" >> "$GITHUB_OUTPUT"
-          echo "prefix=third-party-$RUNNER_OS-$TOOLCHAIN-$PREFIX_HASH$suffix" >> "$GITHUB_OUTPUT"
+          echo "prefix=third-party-$RUNNER_OS-$TOOLCHAIN-$PREFIX_HASH-$fingerprint$suffix" >> "$GITHUB_OUTPUT"
           # The pins only (the URL and SHA256 lines of versions.cmake): an edit elsewhere in the
           # file keeps the downloads entry.
           pins=$(grep -E '^[[:space:]]*(URL|SHA256)[[:space:]]' "$DVV_BUILD/deps/versions.cmake" |
@@ -377,7 +406,7 @@ jobs:
       - *checkout-dvv-build
       - *setup-python
       - *install-tools
-      # Before the keys: the SDK's version is part of the wxWidgets key. The selected Xcode's own
+      # Before the keys: the SDK is part of both keys. The selected Xcode's own
       # macOS SDK for every later step. A plain xcrun can pick the Command Line Tools' SDK, which
       # an image may update past the selected Xcode (xcode-27 20261112: CLT MacOSX27.2.sdk with
       # Xcode 27.1, which then cannot read it); with SDKROOT the Xcode and its SDK always match.

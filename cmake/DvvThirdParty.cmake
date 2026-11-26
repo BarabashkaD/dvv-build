@@ -235,7 +235,8 @@ endfunction()
 
 # dvv_third_party_common_args(<out_var>): the configure arguments every project the superbuild
 # builds gets: install prefix and search path <INSTALL_DIR>, Release, the superbuild's C and C++
-# compilers; with Visual Studio parallel compilation within a project; on Apple the deployment
+# compilers; with Visual Studio parallel compilation within a project and policy CMP0149 NEW (the
+# newest Windows SDK, the one the CI cache keys name); on Apple the deployment
 # target and the architectures (CMAKE_OSX_DEPLOYMENT_TARGET, CMAKE_OSX_ARCHITECTURES, both
 # required), since a project built without them targets the SDK's macOS version, the Objective-C
 # compilers, and -ffile-prefix-map for the project's source, build and install folders in the C,
@@ -251,8 +252,11 @@ function(dvv_third_party_common_args out_var)
         "-DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}"
         "-DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}")
     if(CMAKE_GENERATOR MATCHES "^Visual Studio")
-        # MSBuild otherwise compiles the files of one project one after another.
-        list(APPEND args "-DCMAKE_VS_GLOBALS=UseMultiToolTask=true")
+        # MSBuild otherwise compiles the files of one project one after another. A project whose
+        # cmake_minimum_required predates 3.27 otherwise leaves CMP0149 OLD and builds against the
+        # SDK of the host's Windows version when that one is installed, not the newest.
+        list(APPEND args "-DCMAKE_VS_GLOBALS=UseMultiToolTask=true"
+                         "-DCMAKE_POLICY_DEFAULT_CMP0149=NEW")
     endif()
     if(APPLE)
         if(NOT CMAKE_OSX_DEPLOYMENT_TARGET OR NOT CMAKE_OSX_ARCHITECTURES)

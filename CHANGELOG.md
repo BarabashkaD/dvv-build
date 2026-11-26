@@ -5,6 +5,38 @@ versions follow semantic versioning with the dvv rules: compatible = the same 0.
 minimum version; a replaced or unused API is removed in the next 0.x minor, with no deprecation period.
 This file is the release notes (there are no GitHub Releases).
 
+## [0.6.1] - 2026-11-26
+
+The CI cache keys name the toolset and SDK the third-party prefixes are built with, not the IDE, on
+Windows and macOS, so Windows CI reuses the wxWidgets cache across runner images.
+
+### Fixed
+- Windows CI rebuilt wxWidgets in a build job (about 7 minutes) when the jobs of one run landed on
+  runner images with different Visual Studio builds (18.12.12405.243 and 18.12.12412.261) but the
+  same MSVC toolset (14.52.37025): the wxWidgets cache key hashed Visual Studio's build version, so
+  the job on the newer image missed the entry its prime job had saved. The Windows keys now hash
+  the default MSVC toolset (`VC\Auxiliary\Build\Microsoft.VCToolsVersion.default.txt`, the
+  `VC\Tools\MSVC\<version>` folder) and the newest Windows SDK with `um\windows.h`.
+
+### Changed
+- Every third-party project built with Visual Studio gets policy CMP0149 NEW
+  (`dvv_third_party_common_args`), so it builds against the newest Windows SDK, the one the keys
+  name. Before, a project whose `cmake_minimum_required` predates 3.27 (vk-bootstrap, the Vulkan
+  and SPIRV projects, doctest) took the SDK of the host's Windows version when that one was
+  installed.
+- The macOS keys hash Apple clang's version line (`/usr/bin/clang --version`) and the macOS SDK's
+  version and build (`xcrun --show-sdk-version`, `--show-sdk-build-version`) instead of Xcode's
+  version.
+- The third-party prefix key ends with the same compiler hash as the wxWidgets key on every OS,
+  since the prefix holds static libraries too (vk-bootstrap); before, it left the compiler out.
+- The first CI run in each cache scope (the pull request that moves the pin, then main) rebuilds:
+  on Windows and macOS both the wxWidgets and the prefix entry, on Linux the prefix only (its
+  wxWidgets key is unchanged). The downloaded archives are reused. A local bootstrap rebuilds the
+  prefix once (its stamp covers `cmake/DvvThirdParty.cmake`), not wxWidgets.
+
+Adopting: a library raises its `dvv-build` line to 0.6.1 and the workflow to `@v0.6.1`; the
+application moves `libs/dvv-build` to v0.6.1 and its workflow to `@v0.6.1`; nothing else changes.
+
 ## [0.6.0] - 2026-11-22
 
 The version rule is "the same 0.minor and at least the minimum", so a 0.x minor may remove; the

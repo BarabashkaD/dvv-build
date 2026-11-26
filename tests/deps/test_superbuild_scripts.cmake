@@ -313,8 +313,8 @@ run_script(0 "configs=<Release>" "${probe}" -DMULTI_CONFIG=0 -DPROBE_CONFIGS=rel
 run_script(0 "configs=<Debug;Release>" "${probe}" -DMULTI_CONFIG=1 -DPROBE_CONFIGS=both)
 
 # dvv_third_party_common_args(): the arguments every built project gets. On Apple they carry the
-# deployment target and the architectures (a plain build would target the SDK's version); elsewhere
-# they are unchanged.
+# deployment target and the architectures (a plain build would target the SDK's version); with
+# Visual Studio parallel compilation and CMP0149 NEW (the newest Windows SDK).
 set(probe "${WORK_DIR}/common-args/probe.cmake")
 file(WRITE "${probe}" "include(\"${CMAKE_CURRENT_LIST_DIR}/../../cmake/DvvThirdParty.cmake\")
 set(APPLE \"\${PROBE_APPLE}\")
@@ -343,7 +343,8 @@ run_script(1 "CMAKE_OSX_DEPLOYMENT_TARGET and CMAKE_OSX_ARCHITECTURES must be se
            "${probe}" -DPROBE_APPLE=1 -DPROBE_GENERATOR=Ninja -DPROBE_ARCHITECTURES=arm64)
 run_script(0 "args=<${base_args}>" "${probe}" -DPROBE_APPLE=0 -DPROBE_GENERATOR=Ninja
            -DPROBE_TARGET=27.0 -DPROBE_ARCHITECTURES=arm64)
-run_script(0 "args=<${base_args}\\|-DCMAKE_VS_GLOBALS=UseMultiToolTask=true>" "${probe}"
+run_script(0 "args=<${base_args}\\|-DCMAKE_VS_GLOBALS=UseMultiToolTask=true\\|\
+-DCMAKE_POLICY_DEFAULT_CMP0149=NEW>" "${probe}"
            -DPROBE_APPLE=0 "-DPROBE_GENERATOR=Visual Studio 18 2026")
 
 # dvv_third_party_shared_archive(): a PREBUILT entry with the URL and SHA256 of an entry it depends
