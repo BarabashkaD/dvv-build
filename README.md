@@ -55,7 +55,7 @@ Each library and application lists its dvv dependencies in `dvv-deps.txt`, in de
 
 ```text
 # dvv dependencies: <repository> <minimum version>, dependency order (read by dvv-build).
-dvv-build 0.6.0
+dvv-build 0.6.1
 dvv-base 0.6.0
 dvv-platform 0.4.0
 ```
@@ -204,7 +204,7 @@ contains `;`; a path with `[` or `]` is listed like any other.
 
 ```powershell
 git clone <base>/dvv-gpu
-git clone --branch v0.6.0 <base>/dvv-build      # the dvv-build line of dvv-gpu/dvv-deps.txt
+git clone --branch v0.6.1 <base>/dvv-build      # the dvv-build line of dvv-gpu/dvv-deps.txt
 git -C dvv-build config user.name <GitHub handle>
 git -C dvv-build config user.email <GitHub noreply e-mail>
 python -m pip install -r dvv-build/tools/requirements.txt
@@ -335,7 +335,7 @@ concurrency:                      # newer PR pushes cancel older runs; a running
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   ci:
-    uses: <owner>/dvv-build/.github/workflows/dvv-ci.yml@v0.6.0   # = the dvv-build line
+    uses: <owner>/dvv-build/.github/workflows/dvv-ci.yml@v0.6.1   # = the dvv-build line
     with:
       repo: dvv-gpu
 ```
@@ -376,12 +376,15 @@ The third-party prefix comes from two caches per toolchain `<tc>`:
 
 - wxWidgets, `<root>/_third_party/<tc>-wx`, keyed on the first 16 hex digits of its inputs marker
   (`tools/separate-prefix-hash.cmake`) and of a hash of the compiler version (Linux `clang-19
-  --version`; Windows the Visual Studio build version and the newest MSVC tools folder; macOS the Xcode
-  and SDK versions);
+  --version`; Windows the versions of the default MSVC toolset and of the newest Windows SDK, which
+  every third-party project builds against; macOS Apple clang's version line and the macOS SDK's
+  version and build);
 - the rest, `<root>/_third_party/<tc>`, keyed on `deps/**`, `cmake/DvvThirdParty.cmake` and
-  `cmake/DvvSpdx.cmake` (the inputs of bootstrap's up-to-date stamp).
+  `cmake/DvvSpdx.cmake` (the inputs of bootstrap's up-to-date stamp) and the same compiler hash (the
+  prefix holds static libraries too).
 
-On Linux, the wxWidgets and prefix keys also end with the first 16 hex digits of the CI image's
+The compiler is the toolset and SDK: Visual Studio's and Xcode's own build versions are in neither
+key. On Linux, the wxWidgets and prefix keys also end with the first 16 hex digits of the CI image's
 environment hash.
 
 A prime job per OS (`prime-windows`, `prime-linux`, `prime-macos`) looks both keys up without
